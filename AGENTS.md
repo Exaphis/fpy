@@ -65,6 +65,16 @@ scripts/fpy-tmux-repro.sh vim-open-below
 scripts/fpy-tmux-repro.sh paste
 ```
 
+For startup latency comparisons against plain IPython, use:
+
+```bash
+scripts/benchmark-startup.sh
+```
+
+That benchmark uses `tmux`, builds `fpy` in release mode, and reports both
+prompt-ready time and time to the first successful `1+1` result for `fpy`
+and `ipython`.
+
 There is also an opt-in Rust integration suite in [`tests/tmux_e2e.rs`](tests/tmux_e2e.rs):
 
 ```bash
