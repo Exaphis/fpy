@@ -91,7 +91,7 @@ pub(super) fn editor_syntax_highlighter() -> Option<SyntaxHighlighter> {
     SyntaxHighlighter::new(EDITOR_THEME_NAME, "py").ok()
 }
 
-pub(super) fn editor_status_line(mode: EditorMode, detail: Option<&str>) -> Paragraph<'static> {
+pub(super) fn editor_status_prefix(mode: EditorMode, detail: Option<&str>) -> Paragraph<'static> {
     let (label, style) = editor_mode_badge(mode);
 
     let mut spans = vec![Span::styled(format!(" {label} "), style)];
@@ -102,13 +102,35 @@ pub(super) fn editor_status_line(mode: EditorMode, detail: Option<&str>) -> Para
             Style::default().fg(Color::Cyan),
         ));
     }
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        "Ctrl-P palette",
-        Style::default().fg(Color::DarkGray),
-    ));
 
     Paragraph::new(Line::from(spans))
+}
+
+pub(super) fn editor_palette_hint() -> Paragraph<'static> {
+    Paragraph::new(Line::from(Span::styled(
+        "  Ctrl-P palette",
+        Style::default().fg(Color::DarkGray),
+    )))
+}
+
+pub(super) fn editor_palette_hint_width() -> u16 {
+    u16::try_from("  Ctrl-P palette".chars().count()).unwrap_or(u16::MAX)
+}
+
+pub(super) fn editor_status_prefix_width(mode: EditorMode, detail: Option<&str>) -> u16 {
+    let mode_label = match mode {
+        EditorMode::Insert => "INS",
+        EditorMode::Normal => "NAV",
+        EditorMode::Visual => "VIS",
+        EditorMode::Search => "SRCH",
+    };
+
+    let mut width = 2 + mode_label.chars().count() + 1;
+    if let Some(detail) = detail {
+        width += 1 + detail.chars().count();
+    }
+
+    u16::try_from(width).unwrap_or(u16::MAX)
 }
 
 pub(super) fn status_label<'a>(

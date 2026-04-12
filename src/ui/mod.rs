@@ -32,7 +32,8 @@ use throbber_widgets_tui::ThrobberState;
 
 use self::{
     editor::{
-        build_editor_state, editor_gutter_lines, editor_gutter_width, editor_status_line,
+        build_editor_state, editor_gutter_lines, editor_gutter_width, editor_palette_hint,
+        editor_palette_hint_width, editor_status_prefix, editor_status_prefix_width,
         editor_syntax_highlighter, editor_theme, indent_width, move_editor_to_row, status_label,
     },
     render::{
@@ -362,19 +363,27 @@ impl AppUi {
                     frame.render_widget(editor_view, content_area);
                 }
                 if let Some(throbber) = status_throbber(status) {
+                    let status_detail = status_label(&awaiting_input, &prompt_label);
+                    let prefix_width = editor_status_prefix_width(editor.mode, status_detail);
                     let transient_width = transient_status
                         .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
                         .unwrap_or(0);
-                    let [status_text_area, spinner_area, transient_area] = Layout::horizontal([
-                        Constraint::Min(1),
-                        Constraint::Length(2),
-                        Constraint::Length(transient_width),
-                    ])
-                    .areas(status_area);
+                    let palette_hint_width = editor_palette_hint_width();
+                    let [status_text_area, spinner_gap_area, spinner_area, transient_area, filler_area, palette_hint_area] =
+                        Layout::horizontal([
+                            Constraint::Length(prefix_width),
+                            Constraint::Length(1),
+                            Constraint::Length(2),
+                            Constraint::Length(transient_width),
+                            Constraint::Min(1),
+                            Constraint::Length(palette_hint_width),
+                        ])
+                        .areas(status_area);
                     frame.render_widget(
-                        editor_status_line(editor.mode, status_label(&awaiting_input, &prompt_label)),
+                        editor_status_prefix(editor.mode, status_detail),
                         status_text_area,
                     );
+                    frame.render_widget(Paragraph::new(" "), spinner_gap_area);
                     frame.render_stateful_widget(throbber, spinner_area, throbber_state);
                     if let Some(transient_status) = transient_status {
                         frame.render_widget(
@@ -385,11 +394,24 @@ impl AppUi {
                             transient_area,
                         );
                     }
+                    frame.render_widget(Paragraph::new(""), filler_area);
+                    frame.render_widget(editor_palette_hint(), palette_hint_area);
                 } else {
+                    let status_detail = status_label(&awaiting_input, &prompt_label);
+                    let prefix_width = editor_status_prefix_width(editor.mode, status_detail);
+                    let palette_hint_width = editor_palette_hint_width();
+                    let [status_text_area, filler_area, palette_hint_area] = Layout::horizontal([
+                        Constraint::Length(prefix_width),
+                        Constraint::Min(1),
+                        Constraint::Length(palette_hint_width),
+                    ])
+                    .areas(status_area);
                     frame.render_widget(
-                        editor_status_line(editor.mode, status_label(&awaiting_input, &prompt_label)),
-                        status_area,
+                        editor_status_prefix(editor.mode, status_detail),
+                        status_text_area,
                     );
+                    frame.render_widget(Paragraph::new(""), filler_area);
+                    frame.render_widget(editor_palette_hint(), palette_hint_area);
                 }
 
                 if !palette_open

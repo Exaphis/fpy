@@ -47,7 +47,7 @@ fn multiline_growth_bottom_pinned() {
     assert_contains(&output.after, "In [3]: !ls -lah");
     assert_contains(&output.after, " 1 a");
     assert_contains(&output.after, "12 l");
-    assert_contains(&output.after, "INS  In [4]  Ctrl-P palette");
+    assert_line_contains_all(&output.after, &["INS", "In [4]", "Ctrl-P palette"]);
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn bottom_of_screen_result_still_visible() {
 
     assert_contains(&output.after, "In [5]: 1+1");
     assert_contains(&output.after, "Out[5]: 2");
-    assert_contains(&output.after, "INS  In [6]  Ctrl-P palette");
+    assert_line_contains_all(&output.after, &["INS", "In [6]", "Ctrl-P palette"]);
 }
 
 #[test]
@@ -109,8 +109,10 @@ fn can_compose_while_kernel_is_busy() {
 
     assert_contains(&output.after, "In [1]: import time; time.sleep(3); 42");
     assert_contains(&output.after, "1 1+1");
-    assert_contains(&output.after, "INS  In [2]  Ctrl-P palette");
-    assert_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
+    assert_line_contains_all(
+        &output.after,
+        &["INS", "In [2]", "Kernel busy. Ctrl-C to interrupt", "Ctrl-P palette"],
+    );
 }
 
 #[test]
@@ -125,7 +127,7 @@ fn shift_enter_creates_multiline_editor() {
 
     assert_contains(&output.after, "1 abc");
     assert_contains(&output.after, "2");
-    assert_contains(&output.after, "INS  In [1]  Ctrl-P palette");
+    assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
 }
 
 #[test]
@@ -140,7 +142,7 @@ fn vim_open_below_grows_on_first_try() {
 
     assert_contains(&output.after, "1");
     assert_contains(&output.after, "2");
-    assert_contains(&output.after, "INS  In [2]  Ctrl-P palette");
+    assert_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
 }
 
 #[test]
@@ -170,7 +172,8 @@ fn palette_clears_underlying_empty_prompt() {
     };
 
     assert_contains(&output.after, "Command Palette");
-    assert_line_count(&output.after, "INS  In [1]  Ctrl-P palette", 1);
+    assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
     assert_no_line_contains_all(&output.after, &["Ctrl-P palette", "│"]);
 }
 
@@ -185,7 +188,8 @@ fn palette_close_reopen_does_not_leave_stale_status_cells() {
     };
 
     assert_contains(&output.after, "Command Palette");
-    assert_line_count(&output.after, "INS  In [1]  Ctrl-P palette", 1);
+    assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
     assert_no_line_contains_all(&output.after, &["Ctrl-P palette", "│"]);
     assert_no_line_contains_all(&output.after, &["Quit", "In [1]"]);
 }
@@ -201,7 +205,8 @@ fn palette_move_close_reopen_does_not_mix_with_status_row() {
     };
 
     assert_contains(&output.after, "Command Palette");
-    assert_line_count(&output.after, "INS  In [1]  Ctrl-P palette", 1);
+    assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
     assert_no_line_contains_all(&output.after, &["Ctrl-P palette", "│"]);
     assert_no_line_contains_all(&output.after, &["Quit", "In [1]"]);
     assert_no_line_contains_all(&output.after, &["Interrupt Kernel", "In [1]"]);
@@ -271,6 +276,17 @@ fn assert_line_count(haystack: &str, needle: &str, expected: usize) {
     assert_eq!(
         count, expected,
         "expected {needle:?} to appear {expected} time(s) in output:\n{haystack}"
+    );
+}
+
+fn assert_line_contains_all(haystack: &str, needles: &[&str]) {
+    assert!(
+        haystack
+            .lines()
+            .any(|line| needles.iter().all(|needle| line.contains(needle))),
+        "expected some output line to contain all of {:?}:\n{}",
+        needles,
+        haystack
     );
 }
 
