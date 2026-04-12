@@ -1,0 +1,62 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+match_max 1000000
+
+set root [lindex $argv 0]
+set cmd [lindex $argv 1]
+set raw_log [lindex $argv 2]
+set startup_wait_ms [lindex $argv 3]
+set input_text [lindex $argv 4]
+set post_check [lindex $argv 5]
+
+log_file -noappend $raw_log
+
+set shell_prompt "FPY_HARNESS_PROMPT> "
+set env(TERM) "xterm-256color"
+set env(PS1) $shell_prompt
+
+spawn -noecho env TERM=$env(TERM) PS1=$env(PS1) zsh -fi
+
+expect {
+    -exact $shell_prompt {}
+    timeout { send_user "timed out waiting for initial shell prompt\n"; exit 1 }
+}
+
+send -- "cd $root\r"
+expect {
+    -exact $shell_prompt {}
+    timeout { send_user "timed out waiting for shell after cd\n"; exit 1 }
+}
+
+send -- "$cmd\r"
+after $startup_wait_ms
+
+if {$input_text ne ""} {
+    send -- $input_text
+    after 400
+}
+
+send -- "\004"
+
+expect {
+    -exact $shell_prompt {}
+    timeout { send_user "timed out waiting for shell after fpy exit\n"; exit 1 }
+}
+
+if {$post_check eq "1"} {
+    send -- "printf '<%s>\\n' \"\$TERM\"\r"
+    expect {
+        -exact $shell_prompt {}
+        timeout { send_user "timed out waiting for TERM check\n"; exit 1 }
+    }
+
+    send -- "stty -a | head -n 1\r"
+    expect {
+        -exact $shell_prompt {}
+        timeout { send_user "timed out waiting for stty check\n"; exit 1 }
+    }
+}
+
+send -- "exit\r"
+expect eof
