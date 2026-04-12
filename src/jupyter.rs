@@ -76,7 +76,7 @@ impl MessageCodec {
         }
     }
 
-    pub fn into_zmq(&self, message: &WireMessage) -> Result<ZmqMessage> {
+    pub fn encode_zmq(&self, message: &WireMessage) -> Result<ZmqMessage> {
         let header = serde_json::to_vec(&message.header)?;
         let parent_header = serde_json::to_vec(&message.parent_header)?;
         let metadata = serde_json::to_vec(&message.metadata)?;
@@ -175,7 +175,7 @@ mod tests {
     fn round_trips_jupyter_frames() {
         let codec = MessageCodec::new("secret".into());
         let message = codec.message("execute_request", None, json!({ "code": "1 + 1" }));
-        let zmq = codec.into_zmq(&message).expect("encode");
+        let zmq = codec.encode_zmq(&message).expect("encode");
         let decoded = codec.decode(zmq).expect("decode");
 
         assert_eq!(decoded.header.msg_type, "execute_request");

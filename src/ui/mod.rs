@@ -1,57 +1,50 @@
+mod editor;
+mod render;
+mod transcript;
+
 use anyhow::Result;
 use crossterm::{
-    cursor::{MoveTo, MoveToColumn, Show, position},
+    cursor::{MoveTo, MoveToColumn, Show},
     event::{
-        Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
+        KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
+    queue,
     style::ResetColor,
-    terminal::{self, Clear, ClearType},
+    terminal::{self, Clear, ClearType, ScrollUp},
     terminal::{EnableLineWrap, disable_raw_mode, enable_raw_mode},
 };
 use edtui::{
-    EditorEventHandler, EditorMode, EditorState, EditorTheme, EditorView, Index2, Lines,
-    SyntaxHighlighter,
+    EditorEventHandler, EditorMode, EditorState, EditorView,
     actions::{Chainable, InsertChar, LineBreak, SwitchMode},
-    syntect::{
-        easy::HighlightLines,
-        highlighting::ThemeSet,
-        parsing::SyntaxSet,
-        util::{LinesWithEndings, as_24_bit_terminal_escaped},
-    },
 };
 use futures::StreamExt;
 use ratatui::{
     layout::{Constraint, Layout, Margin, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear as ClearWidget, List, ListItem, Paragraph},
 };
-use std::{
-    io::{Write, stdout},
-    sync::LazyLock,
-};
-use throbber_widgets_tui::{BRAILLE_SIX, Throbber, ThrobberState, WhichUse};
+use std::io::{Write, stdout};
+use throbber_widgets_tui::ThrobberState;
 
+use self::{
+    editor::{
+        build_editor_state, editor_gutter_lines, editor_gutter_width, editor_status_line,
+        editor_syntax_highlighter, editor_theme, indent_width, move_editor_to_row, status_label,
+    },
+    render::{
+        build_terminal, centered_rect, editor_status_height, editor_visible_line_count,
+        initial_pane_top, max_pane_top, pane_rect_at, status_line_for, status_throbber,
+        viewport_height_for_editor,
+    },
+    transcript::highlighted_execute_input,
+};
 use crate::custom_terminal::DefaultTerminal;
 use crate::insert_history::insert_history_text;
 use crate::kernel::KernelStatus;
-
-const MIN_VIEWPORT_HEIGHT: u16 = 1;
-const MAX_VIEWPORT_HEIGHT: u16 = 8;
-const PALETTE_HEIGHT: u16 = 6;
-const MAX_INPUT_LINES: usize = 4;
-const EDITOR_STATUS_HEIGHT: u16 = 1;
-const INDENT_WIDTH: usize = 4;
-const EDITOR_THEME_NAME: &str = "base16-ocean-dark";
-const TRANSCRIPT_THEME_NAME: &str = "base16-ocean.dark";
-const PROMPT_ANSI: &str = "\x1b[36m";
-const ANSI_RESET: &str = "\x1b[0m";
-
-static TRANSCRIPT_SYNTAX_SET: LazyLock<SyntaxSet> =
-    LazyLock::new(SyntaxSet::load_defaults_newlines);
-static TRANSCRIPT_THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteAction {
@@ -110,6 +103,7 @@ impl AppUi {
         enable_raw_mode()?;
         let _ = execute!(
             stdout(),
+            EnableBracketedPaste,
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                     | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
@@ -206,7 +200,7 @@ impl AppUi {
         }
 
         let mut handle = stdout();
-        let _ = execute!(handle, PopKeyboardEnhancementFlags);
+        let _ = execute!(handle, DisableBracketedPaste, PopKeyboardEnhancementFlags);
         write!(handle, "\x1b[r\x1b[0m")?;
         execute!(handle, Show, ResetColor, EnableLineWrap)?;
         for row in pane.y..pane.bottom() {
@@ -275,7 +269,7 @@ impl AppUi {
             if input_active {
                 let [editor_area, status_area] = Layout::vertical([
                     Constraint::Min(1),
-                    Constraint::Length(EDITOR_STATUS_HEIGHT),
+                    Constraint::Length(editor_status_height()),
                 ])
                 .areas(area);
                 let gutter_width =
@@ -292,7 +286,7 @@ impl AppUi {
 
                 let editor_view = EditorView::new(editor)
                     .theme(editor_theme())
-                    .tab_width(INDENT_WIDTH)
+                    .tab_width(indent_width())
                     .wrap(false)
                     .syntax_highlighter(editor_syntax_highlighter())
                     .single_line(false);
@@ -362,6 +356,7 @@ impl AppUi {
                 }
                 Event::Paste(text) => {
                     if self.input_active() {
+                        let text = text.replace("\r\n", "\n").replace('\r', "\n");
                         self.editor_events.on_paste_event(text, &mut self.editor);
                     }
                     return Ok(None);
@@ -430,7 +425,7 @@ impl AppUi {
             KeyEvent {
                 code: KeyCode::Tab, ..
             } if self.input_active() && self.editor.mode == EditorMode::Insert => {
-                for _ in 0..INDENT_WIDTH {
+                for _ in 0..indent_width() {
                     self.editor.execute(InsertChar(' '));
                 }
                 None
@@ -548,12 +543,15 @@ impl AppUi {
 
     fn sync_viewport(&mut self) -> Result<()> {
         let (width, height) = terminal::size()?;
-        let pane_height = self.pane_height();
-        self.pane_top = self.pane_top.min(max_pane_top(height, pane_height));
+        self.pane_top = self.pane_top.min(max_pane_top(height, 1));
+        let pane_height = self.pane_height().min(height.max(1));
         let pane = pane_rect_at(width, height, self.pane_top, pane_height);
         if pane != self.current_pane {
+            self.scroll_history_for_pane_growth(self.current_pane, pane, height)?;
             self.clear_stale_pane_rows(self.current_pane, pane)?;
-            self.terminal_mut()?.set_viewport_area(pane);
+            let terminal = self.terminal_mut()?;
+            terminal.set_viewport_area(pane);
+            terminal.invalidate_viewport();
             self.current_pane = pane;
         }
         Ok(())
@@ -574,9 +572,9 @@ impl AppUi {
 
     fn pane_height(&self) -> u16 {
         let input_rows = if self.input_active() {
-            self.editor_visible_line_count() as u16 + EDITOR_STATUS_HEIGHT
+            self.editor_visible_line_count() as u16 + editor_status_height()
         } else {
-            1 + EDITOR_STATUS_HEIGHT
+            1 + editor_status_height()
         };
         viewport_height_for_editor(input_rows, self.palette_open)
     }
@@ -600,7 +598,7 @@ impl AppUi {
     }
 
     fn editor_visible_line_count(&self) -> usize {
-        self.editor.lines.len().min(MAX_INPUT_LINES).max(1)
+        editor_visible_line_count(self.editor.lines.len())
     }
 
     fn editor_is_empty(&self) -> bool {
@@ -644,6 +642,31 @@ impl AppUi {
         Ok(())
     }
 
+    fn scroll_history_for_pane_growth(&mut self, old: Rect, new: Rect, screen_height: u16) -> Result<()> {
+        if old.is_empty()
+            || new.height <= old.height
+            || old.bottom() != screen_height
+            || new.bottom() != screen_height
+            || old.y == 0
+        {
+            return Ok(());
+        }
+
+        let growth = new.height.saturating_sub(old.height);
+        let history_bottom = old.y.saturating_sub(1);
+        let terminal = self.terminal_mut()?;
+        let handle = terminal.backend_mut();
+        queue!(
+            handle,
+            crossterm::style::Print(set_scroll_region(0, history_bottom)),
+            MoveTo(0, history_bottom),
+            ScrollUp(growth),
+            crossterm::style::Print(reset_scroll_region()),
+        )?;
+        handle.flush()?;
+        Ok(())
+    }
+
     fn handle_normal_mode_count_prefix(&mut self, key: KeyEvent) -> Option<Option<UiAction>> {
         match key.code {
             KeyCode::Char(digit)
@@ -677,307 +700,6 @@ impl Drop for AppUi {
     }
 }
 
-fn initial_pane_top() -> u16 {
-    position()
-        .map(|(_, row)| row.saturating_add(1))
-        .unwrap_or(0)
-}
-
-fn build_editor_state(text: &str) -> EditorState {
-    let mut editor = EditorState::new(Lines::from(text));
-    editor.mode = EditorMode::Insert;
-
-    let rows = text.split('\n').collect::<Vec<_>>();
-    let row = rows.len().saturating_sub(1);
-    let col = rows.last().map_or(0, |line| line.chars().count());
-    editor.cursor = Index2::new(row, col);
-    editor
-}
-
-fn move_editor_to_row(editor: &mut EditorState, target_row: usize) {
-    let max_row = editor.lines.len().saturating_sub(1);
-    let target_row = target_row.min(max_row);
-    let current_row = editor.cursor.row;
-    if target_row >= current_row {
-        editor.execute(edtui::actions::MoveDown(target_row - current_row));
-    } else {
-        editor.execute(edtui::actions::MoveUp(current_row - target_row));
-    }
-}
-
-fn build_terminal(pane: Rect) -> Result<DefaultTerminal> {
-    let mut terminal =
-        DefaultTerminal::with_options(ratatui::backend::CrosstermBackend::new(stdout()))?;
-    terminal.set_viewport_area(pane);
-    Ok(terminal)
-}
-
-fn pane_rect_at(width: u16, height: u16, pane_top: u16, pane_height: u16) -> Rect {
-    let top = pane_top.min(max_pane_top(height, pane_height));
-    let pane_height = pane_height.min(height.saturating_sub(top).max(1));
-    Rect::new(0, top, width, pane_height)
-}
-
-fn max_pane_top(height: u16, pane_height: u16) -> u16 {
-    height.saturating_sub(pane_height.min(height.max(1)))
-}
-
-fn viewport_height_for_editor(pane_rows: u16, palette_open: bool) -> u16 {
-    let pane_rows = pane_rows.max(1);
-    let height = if palette_open {
-        pane_rows.max(PALETTE_HEIGHT)
-    } else {
-        pane_rows
-    };
-    height.clamp(MIN_VIEWPORT_HEIGHT, MAX_VIEWPORT_HEIGHT)
-}
-
-fn prompt_prefixes(awaiting_input: &Option<(String, bool)>) -> Option<(String, String)> {
-    match awaiting_input {
-        Some((prompt, true)) => {
-            let first = format!("stdin (hidden) {prompt}");
-            let continuation = " ".repeat(display_width(&first));
-            Some((first, continuation))
-        }
-        Some((prompt, false)) => {
-            let first = prompt.clone();
-            let continuation = " ".repeat(display_width(&first));
-            Some((first, continuation))
-        }
-        None => None,
-    }
-}
-
-fn status_line_for(status: KernelStatus) -> Option<Line<'static>> {
-    match status {
-        KernelStatus::Disconnected => Some(Line::from(Span::styled(
-            "Kernel disconnected",
-            Style::default().fg(Color::Red),
-        ))),
-        _ => None,
-    }
-}
-
-fn status_throbber(status: KernelStatus) -> Option<Throbber<'static>> {
-    match status {
-        KernelStatus::Connecting => Some(
-            Throbber::default()
-                .label("Connecting to kernel...")
-                .style(Style::default())
-                .throbber_style(Style::default().fg(Color::Yellow))
-                .throbber_set(BRAILLE_SIX)
-                .use_type(WhichUse::Spin),
-        ),
-        KernelStatus::Busy => Some(
-            Throbber::default()
-                .label("Kernel busy. Ctrl-C to interrupt")
-                .style(Style::default())
-                .throbber_style(Style::default().fg(Color::Yellow))
-                .throbber_set(BRAILLE_SIX)
-                .use_type(WhichUse::Spin),
-        ),
-        _ => None,
-    }
-}
-
-fn prompt_gutter_width(prompt_prefix: &str, continuation_prefix: &str) -> u16 {
-    u16::try_from(display_width(prompt_prefix).max(display_width(continuation_prefix)))
-        .unwrap_or(u16::MAX)
-        .max(1)
-}
-
-fn prompt_gutter_lines(
-    prompt_prefix: &str,
-    continuation_prefix: &str,
-    height: usize,
-) -> Vec<Line<'static>> {
-    let width = display_width(prompt_prefix).max(display_width(continuation_prefix));
-    (0..height.max(1))
-        .map(|index| {
-            let prefix = if index == 0 {
-                prompt_prefix
-            } else {
-                continuation_prefix
-            };
-            Line::from(Span::styled(
-                format!("{prefix:<width$}"),
-                Style::default().fg(Color::Cyan),
-            ))
-        })
-        .collect()
-}
-
-fn line_number_gutter_width(visible_lines: usize) -> u16 {
-    let digits = visible_lines.max(1).to_string().len();
-    u16::try_from(digits + 1).unwrap_or(u16::MAX).max(2)
-}
-
-fn line_number_gutter_lines(height: usize, visible_lines: usize) -> Vec<Line<'static>> {
-    let width = usize::from(line_number_gutter_width(visible_lines)).saturating_sub(1);
-    (0..height.max(1))
-        .map(|index| {
-            let line_number = index + 1;
-            Line::from(Span::styled(
-                format!("{line_number:>width$} ", width = width),
-                Style::default().fg(Color::DarkGray),
-            ))
-        })
-        .collect()
-}
-
-fn editor_gutter_width(awaiting_input: &Option<(String, bool)>, visible_lines: usize) -> u16 {
-    if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
-        prompt_gutter_width(&prompt_prefix, &continuation_prefix)
-    } else {
-        line_number_gutter_width(visible_lines)
-    }
-}
-
-fn editor_gutter_lines(
-    awaiting_input: &Option<(String, bool)>,
-    height: usize,
-    visible_lines: usize,
-) -> Vec<Line<'static>> {
-    if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
-        prompt_gutter_lines(&prompt_prefix, &continuation_prefix, height)
-    } else {
-        line_number_gutter_lines(height, visible_lines)
-    }
-}
-
-fn editor_theme() -> EditorTheme<'static> {
-    EditorTheme::default()
-        .base(Style::default())
-        .cursor_style(Style::default().add_modifier(Modifier::REVERSED))
-        .selection_style(Style::default().bg(Color::DarkGray))
-        .hide_status_line()
-}
-
-fn editor_syntax_highlighter() -> Option<SyntaxHighlighter> {
-    SyntaxHighlighter::new(EDITOR_THEME_NAME, "py").ok()
-}
-
-fn editor_status_line(mode: EditorMode, detail: Option<&str>) -> Paragraph<'static> {
-    let (label, style) = editor_mode_badge(mode);
-
-    let mut spans = vec![Span::styled(format!(" {label} "), style)];
-    if let Some(detail) = detail {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            detail.to_string(),
-            Style::default().fg(Color::Cyan),
-        ));
-    }
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        "Ctrl-P palette",
-        Style::default().fg(Color::DarkGray),
-    ));
-
-    Paragraph::new(Line::from(spans))
-}
-
-fn editor_mode_badge(mode: EditorMode) -> (&'static str, Style) {
-    match mode {
-        EditorMode::Insert => ("INS", Style::default().fg(Color::Black).bg(Color::Cyan)),
-        EditorMode::Normal => ("NAV", Style::default().fg(Color::Black).bg(Color::Yellow)),
-        EditorMode::Visual => ("VIS", Style::default().fg(Color::Black).bg(Color::Magenta)),
-        EditorMode::Search => ("SRCH", Style::default().fg(Color::Black).bg(Color::Green)),
-    }
-}
-
-fn status_label<'a>(
-    awaiting_input: &'a Option<(String, bool)>,
-    prompt_label: &'a str,
-) -> Option<&'a str> {
-    if awaiting_input.is_some() {
-        Some("stdin")
-    } else {
-        Some(prompt_label)
-    }
-}
-
-fn highlighted_execute_input(execution_count: Option<u32>, code: &str) -> String {
-    let prompt = execution_count
-        .map(|count| format!("In [{count}]: "))
-        .unwrap_or_else(|| "In [?]: ".to_string());
-    let continuation = format!("{:>width$}", "...: ", width = prompt.len());
-    let syntax = TRANSCRIPT_SYNTAX_SET
-        .find_syntax_by_extension("py")
-        .unwrap_or_else(|| TRANSCRIPT_SYNTAX_SET.find_syntax_plain_text());
-    let theme = &TRANSCRIPT_THEME_SET.themes[TRANSCRIPT_THEME_NAME];
-    let mut highlighter = HighlightLines::new(syntax, theme);
-    let mut rendered = String::new();
-
-    for (index, line) in LinesWithEndings::from(code).enumerate() {
-        if index > 0 {
-            rendered.push_str(PROMPT_ANSI);
-            rendered.push_str(&continuation);
-            rendered.push_str(ANSI_RESET);
-        } else {
-            rendered.push_str(PROMPT_ANSI);
-            rendered.push_str(&prompt);
-            rendered.push_str(ANSI_RESET);
-        }
-
-        match highlighter.highlight_line(line, &TRANSCRIPT_SYNTAX_SET) {
-            Ok(ranges) => rendered.push_str(&as_24_bit_terminal_escaped(&ranges, false)),
-            Err(_) => rendered.push_str(line),
-        }
-    }
-
-    if rendered.is_empty() {
-        rendered.push_str(PROMPT_ANSI);
-        rendered.push_str(&prompt);
-        rendered.push_str(ANSI_RESET);
-    }
-
-    rendered
-}
-
-fn display_width(text: &str) -> usize {
-    strip_ansi(text).chars().count()
-}
-
-#[cfg(test)]
-fn rendered_line_count(text: &str, width: u16) -> u16 {
-    let width = width.max(1) as usize;
-    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let mut logical_lines = normalized.split('\n').collect::<Vec<_>>();
-    if normalized.ends_with('\n') && logical_lines.len() > 1 {
-        logical_lines.pop();
-    }
-    let mut line_count = 0usize;
-
-    for line in logical_lines {
-        let visible_width = strip_ansi(line).chars().count();
-        line_count += visible_width.max(1).div_ceil(width);
-    }
-
-    line_count.clamp(1, u16::MAX as usize) as u16
-}
-
-fn strip_ansi(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && matches!(chars.peek(), Some('[')) {
-            chars.next();
-            while let Some(next) = chars.next() {
-                if ('@'..='~').contains(&next) {
-                    break;
-                }
-            }
-            continue;
-        }
-
-        result.push(ch);
-    }
-
-    result
-}
-
 fn palette_items() -> [PaletteAction; 5] {
     [
         PaletteAction::Quit,
@@ -988,146 +710,14 @@ fn palette_items() -> [PaletteAction; 5] {
     ]
 }
 
-fn centered_rect(
-    width_percent: u16,
-    height_percent: u16,
-    area: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - height_percent) / 2),
-        Constraint::Percentage(height_percent),
-        Constraint::Percentage((100 - height_percent) / 2),
-    ])
-    .split(area);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - width_percent) / 2),
-        Constraint::Percentage(width_percent),
-        Constraint::Percentage((100 - width_percent) / 2),
-    ])
-    .split(vertical[1])[1]
+fn set_scroll_region(top: u16, bottom: u16) -> String {
+    format!(
+        "\x1b[{};{}r",
+        top.saturating_add(1),
+        bottom.saturating_add(1)
+    )
 }
 
-#[cfg(test)]
-mod tests {
-    use edtui::{EditorMode, Index2};
-
-    use super::{
-        build_editor_state, editor_gutter_lines, editor_mode_badge, editor_syntax_highlighter,
-        highlighted_execute_input, line_number_gutter_lines, move_editor_to_row,
-        prompt_gutter_lines, prompt_prefixes, rendered_line_count, status_label, status_throbber,
-        strip_ansi,
-    };
-    use crate::insert_history::transcript_lines;
-    use crate::kernel::KernelStatus;
-
-    #[test]
-    fn editor_state_starts_in_insert_mode_at_end() {
-        let editor = build_editor_state("a\nbc");
-        assert_eq!(editor.mode, EditorMode::Insert);
-        assert_eq!(editor.cursor, Index2::new(1, 2));
-    }
-
-    #[test]
-    fn splits_transcript_lines_without_extra_trailing_blank_line() {
-        assert_eq!(transcript_lines("a\nb"), vec!["a", "b"]);
-        assert_eq!(transcript_lines("a\r\nb\r\n"), vec!["a", "b"]);
-    }
-
-    #[test]
-    fn strips_basic_ansi_sequences() {
-        assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m"), "red");
-    }
-
-    #[test]
-    fn counts_wrapped_rendered_lines() {
-        assert_eq!(rendered_line_count("abcdef", 3), 2);
-        assert_eq!(rendered_line_count("a\nbc", 10), 2);
-        assert_eq!(rendered_line_count("a\n", 10), 1);
-    }
-
-    #[test]
-    fn builds_ipython_prompt_prefixes() {
-        let (first, continuation) = prompt_prefixes(&Some(("stdin> ".to_string(), false))).unwrap();
-        assert_eq!(first, "stdin> ");
-        assert_eq!(continuation, "       ");
-    }
-
-    #[test]
-    fn builds_line_number_gutter_lines() {
-        let lines = line_number_gutter_lines(3, 3);
-        assert_eq!(lines.len(), 3);
-    }
-
-    #[test]
-    fn uses_line_numbers_for_normal_editor_gutter() {
-        let lines = editor_gutter_lines(&None, 2, 2);
-        assert_eq!(lines.len(), 2);
-    }
-
-    #[test]
-    fn uses_stdin_label_in_status_bar() {
-        assert_eq!(
-            status_label(&Some(("input".to_string(), false)), "In [3]"),
-            Some("stdin")
-        );
-    }
-
-    #[test]
-    fn uses_prompt_label_in_status_bar() {
-        assert_eq!(status_label(&None, "In [3]"), Some("In [3]"));
-    }
-
-    #[test]
-    fn builds_stdin_prompt_prefixes() {
-        let (first, continuation) =
-            prompt_prefixes(&Some(("In [3]: ".to_string(), false))).unwrap();
-        assert_eq!(first, "In [3]: ");
-        assert_eq!(continuation, "        ");
-    }
-
-    #[test]
-    fn renders_busy_spinner_status() {
-        assert!(status_throbber(KernelStatus::Busy).is_some());
-    }
-
-    #[test]
-    fn builds_python_syntax_highlighter() {
-        assert!(editor_syntax_highlighter().is_some());
-    }
-
-    #[test]
-    fn builds_prompt_gutter_lines() {
-        let lines = prompt_gutter_lines("In [1]: ", "   ...: ", 2);
-        assert_eq!(lines.len(), 2);
-    }
-
-    #[test]
-    fn maps_editor_modes_to_badges() {
-        assert_eq!(editor_mode_badge(EditorMode::Insert).0, "INS");
-        assert_eq!(editor_mode_badge(EditorMode::Normal).0, "NAV");
-    }
-
-    #[test]
-    fn highlights_execute_input_with_prompt_and_ansi() {
-        let rendered = highlighted_execute_input(Some(2), "x = 1");
-        assert!(rendered.contains("In [2]: "));
-        assert!(rendered.contains("\u{1b}["));
-    }
-
-    #[test]
-    fn highlights_multiline_execute_input_with_ipython_continuation_prompt() {
-        let rendered = strip_ansi(&highlighted_execute_input(Some(2), "x = 1\ny = 2"));
-        assert!(rendered.contains("In [2]: x = 1\n   ...: y = 2"));
-    }
-
-    #[test]
-    fn moves_editor_to_target_row_and_clamps_to_end() {
-        let mut editor = build_editor_state("a\nb\nc");
-        move_editor_to_row(&mut editor, 1);
-        assert_eq!(editor.cursor.row, 1);
-
-        move_editor_to_row(&mut editor, 99);
-        assert_eq!(editor.cursor.row, 2);
-    }
+fn reset_scroll_region() -> &'static str {
+    "\x1b[r"
 }

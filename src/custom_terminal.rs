@@ -65,7 +65,6 @@ where
     viewport_area: Rect,
     last_known_screen_size: Size,
     last_known_cursor_pos: Position,
-    visible_history_rows: u16,
 }
 
 impl<B> Drop for Terminal<B>
@@ -95,7 +94,6 @@ where
             viewport_area,
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
-            visible_history_rows: 0,
         })
     }
 
@@ -107,7 +105,6 @@ where
         self.current_buffer_mut().resize(area);
         self.previous_buffer_mut().resize(area);
         self.viewport_area = area;
-        self.visible_history_rows = self.visible_history_rows.min(area.top());
     }
 
     pub fn invalidate_viewport(&mut self) {

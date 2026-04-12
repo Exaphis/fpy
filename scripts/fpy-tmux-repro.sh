@@ -17,6 +17,8 @@ EXIT_WAIT="${EXIT_WAIT:-1}"
 CAPTURE_LINES="${CAPTURE_LINES:-40}"
 BEFORE_LOG="${BEFORE_LOG:-$ROOT/target/fpy-tmux-repro.before.log}"
 AFTER_LOG="${AFTER_LOG:-$ROOT/target/fpy-tmux-repro.after.log}"
+PASTE_TEXT="${PASTE_TEXT:-x = 1
+y = 2}"
 
 mkdir -p "$ROOT/target"
 
@@ -85,6 +87,24 @@ case "$ACTION" in
   shift-enter)
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    ;;
+  paste)
+    tmux set-buffer -b fpy-repro "$PASTE_TEXT"
+    tmux paste-buffer -p -t "$SESSION" -b fpy-repro
+    ;;
+  vim-open-below)
+    tmux send-keys -t "$SESSION" Escape
+    sleep 0.2
+    tmux send-keys -t "$SESSION" o
+    ;;
+  vim-open-below-twice)
+    tmux send-keys -t "$SESSION" Escape
+    sleep 0.2
+    tmux send-keys -t "$SESSION" o
+    sleep 0.2
+    tmux send-keys -t "$SESSION" Escape
+    sleep 0.2
+    tmux send-keys -t "$SESSION" o
     ;;
   ctrl-l)
     tmux send-keys -t "$SESSION" C-l

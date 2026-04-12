@@ -27,96 +27,15 @@ pub async fn run(cli: Cli) -> Result<()> {
             ui.redraw()?;
 
             if let Some(session) = active_session.as_mut() {
-                if ui.needs_animation() {
-                    tokio::select! {
-                        event = session.kernel_events.recv() => {
-                            match event {
-                                Some(event) => {
-                                    if handle_kernel_event(&mut ui, event)? {
-                                        break;
-                                    }
-                                }
-                                None => break,
-                            }
-                        }
-                        _ = liveness_check.tick() => {
-                            if let Some(message) = session.kernel.poll_local_exit()? {
-                                ui.set_status(KernelStatus::Disconnected);
-                                ui.insert_transcript(message)?;
-                                break;
-                            }
-                        }
-                        _ = ui_tick.tick() => {}
-                        input = ui.next_action() => {
-                            if let Some(action) = input? {
-                                if handle_ready_ui_action(&mut ui, &mut session.kernel, action).await? {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    tokio::select! {
-                        event = session.kernel_events.recv() => {
-                            match event {
-                                Some(event) => {
-                                    if handle_kernel_event(&mut ui, event)? {
-                                        break;
-                                    }
-                                }
-                                None => break,
-                            }
-                        }
-                        _ = liveness_check.tick() => {
-                            if let Some(message) = session.kernel.poll_local_exit()? {
-                                ui.set_status(KernelStatus::Disconnected);
-                                ui.insert_transcript(message)?;
-                                break;
-                            }
-                        }
-                        input = ui.next_action() => {
-                            if let Some(action) = input? {
-                                if handle_ready_ui_action(&mut ui, &mut session.kernel, action).await? {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                if run_active_iteration(&mut ui, session, &mut liveness_check, &mut ui_tick).await?
+                {
+                    break;
                 }
             } else {
-                if ui.needs_animation() {
-                    tokio::select! {
-                        bootstrap_result = &mut bootstrap_rx => {
-                            let (kernel, kernel_events) = bootstrap_result
-                                .map_err(|_| anyhow::anyhow!("kernel startup task terminated unexpectedly"))??;
-                            ui.set_connection_summary(kernel.connection_summary());
-                            active_session = Some(ActiveSession { kernel, kernel_events });
-                        }
-                        _ = ui_tick.tick() => {}
-                        input = ui.next_action() => {
-                            if let Some(action) = input? {
-                                if handle_pending_ui_action(&mut ui, action)? {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    tokio::select! {
-                        bootstrap_result = &mut bootstrap_rx => {
-                            let (kernel, kernel_events) = bootstrap_result
-                                .map_err(|_| anyhow::anyhow!("kernel startup task terminated unexpectedly"))??;
-                            ui.set_connection_summary(kernel.connection_summary());
-                            active_session = Some(ActiveSession { kernel, kernel_events });
-                        }
-                        input = ui.next_action() => {
-                            if let Some(action) = input? {
-                                if handle_pending_ui_action(&mut ui, action)? {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                match run_bootstrap_iteration(&mut ui, &mut bootstrap_rx, &mut ui_tick).await? {
+                    BootstrapOutcome::Continue => {}
+                    BootstrapOutcome::Exit => break,
+                    BootstrapOutcome::Activated(session) => active_session = Some(*session),
                 }
             }
         }
@@ -142,18 +61,20 @@ struct ActiveSession {
     kernel_events: tokio::sync::mpsc::UnboundedReceiver<KernelEvent>,
 }
 
-fn start_bootstrap(
-    cli: Cli,
-) -> Result<(
-    String,
-    JoinHandle<()>,
-    oneshot::Receiver<
-        Result<(
-            KernelSession,
-            tokio::sync::mpsc::UnboundedReceiver<KernelEvent>,
-        )>,
-    >,
-)> {
+type BootstrapReceiver = oneshot::Receiver<Result<BootstrappedSession>>;
+type BootstrappedSession = (
+    KernelSession,
+    tokio::sync::mpsc::UnboundedReceiver<KernelEvent>,
+);
+type BootstrapTaskResult = Result<BootstrappedSession>;
+
+enum BootstrapOutcome {
+    Continue,
+    Exit,
+    Activated(Box<ActiveSession>),
+}
+
+fn start_bootstrap(cli: Cli) -> Result<(String, JoinHandle<()>, BootstrapReceiver)> {
     let startup_message = match &cli.command {
         Command::Run(_) => "starting local kernel...".to_string(),
         Command::Attach(args) => format!("connecting to {}...", args.connection_file.display()),
@@ -178,6 +99,123 @@ fn start_bootstrap(
     });
 
     Ok((startup_message, task, rx))
+}
+
+async fn run_active_iteration(
+    ui: &mut AppUi,
+    session: &mut ActiveSession,
+    liveness_check: &mut time::Interval,
+    ui_tick: &mut time::Interval,
+) -> Result<bool> {
+    if ui.needs_animation() {
+        tokio::select! {
+            event = session.kernel_events.recv() => {
+                handle_kernel_event_stream(ui, event)
+            }
+            _ = liveness_check.tick() => {
+                handle_local_kernel_liveness(ui, &mut session.kernel)
+            }
+            _ = ui_tick.tick() => Ok(false),
+            input = ui.next_action() => {
+                handle_ready_input(ui, &mut session.kernel, input).await
+            }
+        }
+    } else {
+        tokio::select! {
+            event = session.kernel_events.recv() => {
+                handle_kernel_event_stream(ui, event)
+            }
+            _ = liveness_check.tick() => {
+                handle_local_kernel_liveness(ui, &mut session.kernel)
+            }
+            input = ui.next_action() => {
+                handle_ready_input(ui, &mut session.kernel, input).await
+            }
+        }
+    }
+}
+
+async fn run_bootstrap_iteration(
+    ui: &mut AppUi,
+    bootstrap_rx: &mut BootstrapReceiver,
+    ui_tick: &mut time::Interval,
+) -> Result<BootstrapOutcome> {
+    if ui.needs_animation() {
+        tokio::select! {
+            bootstrap_result = bootstrap_rx => {
+                activate_bootstrap_result(ui, bootstrap_result)
+            }
+            _ = ui_tick.tick() => Ok(BootstrapOutcome::Continue),
+            input = ui.next_action() => {
+                handle_pending_input(ui, input)
+            }
+        }
+    } else {
+        tokio::select! {
+            bootstrap_result = bootstrap_rx => {
+                activate_bootstrap_result(ui, bootstrap_result)
+            }
+            input = ui.next_action() => {
+                handle_pending_input(ui, input)
+            }
+        }
+    }
+}
+
+fn activate_bootstrap_result(
+    ui: &mut AppUi,
+    bootstrap_result: Result<BootstrapTaskResult, oneshot::error::RecvError>,
+) -> Result<BootstrapOutcome> {
+    let bootstrap_result = bootstrap_result
+        .map_err(|_| anyhow::anyhow!("kernel startup task terminated unexpectedly"))?;
+    let (kernel, kernel_events) = bootstrap_result?;
+    ui.set_connection_summary(kernel.connection_summary());
+    Ok(BootstrapOutcome::Activated(Box::new(ActiveSession {
+        kernel,
+        kernel_events,
+    })))
+}
+
+fn handle_kernel_event_stream(ui: &mut AppUi, event: Option<KernelEvent>) -> Result<bool> {
+    match event {
+        Some(event) => handle_kernel_event(ui, event),
+        None => Ok(true),
+    }
+}
+
+fn handle_local_kernel_liveness(ui: &mut AppUi, kernel: &mut KernelSession) -> Result<bool> {
+    if let Some(message) = kernel.poll_local_exit()? {
+        ui.set_status(KernelStatus::Disconnected);
+        ui.insert_transcript(message)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+async fn handle_ready_input(
+    ui: &mut AppUi,
+    kernel: &mut KernelSession,
+    input: Result<Option<UiAction>>,
+) -> Result<bool> {
+    if let Some(action) = input? {
+        handle_ready_ui_action(ui, kernel, action).await
+    } else {
+        Ok(false)
+    }
+}
+
+fn handle_pending_input(
+    ui: &mut AppUi,
+    input: Result<Option<UiAction>>,
+) -> Result<BootstrapOutcome> {
+    if let Some(action) = input?
+        && handle_pending_ui_action(ui, action)?
+    {
+        Ok(BootstrapOutcome::Exit)
+    } else {
+        Ok(BootstrapOutcome::Continue)
+    }
 }
 
 fn handle_kernel_event(ui: &mut AppUi, event: KernelEvent) -> Result<bool> {
