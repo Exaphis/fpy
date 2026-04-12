@@ -60,11 +60,19 @@ pub(super) fn status_line_for(status: KernelStatus) -> Option<Line<'static>> {
     }
 }
 
+pub(super) fn transient_status_label(status: KernelStatus) -> Option<&'static str> {
+    match status {
+        KernelStatus::Connecting => Some("Connecting to kernel..."),
+        KernelStatus::Busy => Some("Kernel busy. Ctrl-C to interrupt"),
+        _ => None,
+    }
+}
+
 pub(super) fn status_throbber(status: KernelStatus) -> Option<Throbber<'static>> {
     match status {
         KernelStatus::Connecting => Some(
             Throbber::default()
-                .label("Connecting to kernel...")
+                .label("")
                 .style(Style::default())
                 .throbber_style(Style::default().fg(Color::Yellow))
                 .throbber_set(BRAILLE_SIX)
@@ -72,7 +80,7 @@ pub(super) fn status_throbber(status: KernelStatus) -> Option<Throbber<'static>>
         ),
         KernelStatus::Busy => Some(
             Throbber::default()
-                .label("Kernel busy. Ctrl-C to interrupt")
+                .label("")
                 .style(Style::default())
                 .throbber_style(Style::default().fg(Color::Yellow))
                 .throbber_set(BRAILLE_SIX)
@@ -104,11 +112,19 @@ pub(super) fn editor_status_height() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::status_throbber;
+    use super::{status_throbber, transient_status_label};
     use crate::kernel::KernelStatus;
 
     #[test]
     fn renders_busy_spinner_status() {
         assert!(status_throbber(KernelStatus::Busy).is_some());
+    }
+
+    #[test]
+    fn renders_busy_status_label() {
+        assert_eq!(
+            transient_status_label(KernelStatus::Busy),
+            Some("Kernel busy. Ctrl-C to interrupt")
+        );
     }
 }

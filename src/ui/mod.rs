@@ -38,7 +38,7 @@ use self::{
     render::{
         build_terminal, centered_rect, editor_status_height, editor_visible_line_count,
         initial_pane_top, max_pane_top, pane_rect_at, status_line_for, status_throbber,
-        viewport_height_for_editor,
+        transient_status_label, viewport_height_for_editor,
     },
     transcript::highlighted_execute_input,
 };
@@ -248,6 +248,7 @@ impl AppUi {
         let prompt_label = self.prompt_label();
         let visible_lines = self.editor_visible_line_count();
         let status = self.status;
+        let transient_status = transient_status_label(status);
 
         let AppUi {
             terminal,
@@ -291,16 +292,40 @@ impl AppUi {
                     .syntax_highlighter(editor_syntax_highlighter())
                     .single_line(false);
                 frame.render_widget(editor_view, content_area);
-                frame.render_widget(
-                    editor_status_line(editor.mode, status_label(&awaiting_input, &prompt_label)),
-                    status_area,
-                );
+                if let Some(throbber) = status_throbber(status) {
+                    let transient_width = transient_status
+                        .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
+                        .unwrap_or(0);
+                    let [status_text_area, spinner_area, transient_area] = Layout::horizontal([
+                        Constraint::Min(1),
+                        Constraint::Length(2),
+                        Constraint::Length(transient_width),
+                    ])
+                    .areas(status_area);
+                    frame.render_widget(
+                        editor_status_line(editor.mode, status_label(&awaiting_input, &prompt_label)),
+                        status_text_area,
+                    );
+                    frame.render_stateful_widget(throbber, spinner_area, throbber_state);
+                    if let Some(transient_status) = transient_status {
+                        frame.render_widget(
+                            Paragraph::new(Line::from(Span::styled(
+                                transient_status.to_string(),
+                                Style::default().fg(Color::Yellow),
+                            ))),
+                            transient_area,
+                        );
+                    }
+                } else {
+                    frame.render_widget(
+                        editor_status_line(editor.mode, status_label(&awaiting_input, &prompt_label)),
+                        status_area,
+                    );
+                }
 
                 if let Some(position) = editor.cursor_screen_position() {
                     frame.set_cursor_position(position);
                 }
-            } else if let Some(throbber) = status_throbber(status) {
-                frame.render_stateful_widget(throbber, area, throbber_state);
             } else if let Some(status_line) = status_line_for(status) {
                 frame.render_widget(Paragraph::new(status_line), area);
             } else {
@@ -355,7 +380,7 @@ impl AppUi {
                     return Ok(None);
                 }
                 Event::Paste(text) => {
-                    if self.input_active() {
+                    if self.editor_enabled() {
                         let text = text.replace("\r\n", "\n").replace('\r', "\n");
                         self.editor_events.on_paste_event(text, &mut self.editor);
                     }
@@ -376,7 +401,7 @@ impl AppUi {
             return self.handle_palette_key(key);
         }
 
-        if self.input_active()
+        if self.editor_enabled()
             && matches!(self.editor.mode, EditorMode::Normal | EditorMode::Visual)
         {
             if let Some(action) = self.handle_normal_mode_count_prefix(key) {
@@ -400,7 +425,7 @@ impl AppUi {
                 modifiers,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.input_active() {
+                if self.submit_ready() {
                     self.reset_editor();
                     None
                 } else {
@@ -412,7 +437,7 @@ impl AppUi {
                 modifiers,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL)
-                && self.input_active()
+                && self.editor_enabled()
                 && self.editor_is_empty() =>
             {
                 Some(UiAction::Exit)
@@ -424,7 +449,7 @@ impl AppUi {
             } if modifiers.contains(KeyModifiers::CONTROL) => Some(UiAction::ClearScreen),
             KeyEvent {
                 code: KeyCode::Tab, ..
-            } if self.input_active() && self.editor.mode == EditorMode::Insert => {
+            } if self.editor_enabled() && self.editor.mode == EditorMode::Insert => {
                 for _ in 0..indent_width() {
                     self.editor.execute(InsertChar(' '));
                 }
@@ -434,7 +459,7 @@ impl AppUi {
                 code: KeyCode::Enter,
                 modifiers,
                 ..
-            } if self.input_active() && modifiers.contains(KeyModifiers::SHIFT) => {
+            } if self.editor_enabled() && modifiers.contains(KeyModifiers::SHIFT) => {
                 self.editor
                     .execute(SwitchMode(EditorMode::Insert).chain(LineBreak(1)));
                 None
@@ -442,7 +467,7 @@ impl AppUi {
             KeyEvent {
                 code: KeyCode::Enter,
                 ..
-            } if self.input_active() => {
+            } if self.submit_ready() => {
                 let text = self.take_editor_text();
                 if text.trim().is_empty() {
                     return None;
@@ -459,7 +484,7 @@ impl AppUi {
             }
             KeyEvent {
                 code: KeyCode::Up, ..
-            } if self.input_active()
+            } if self.editor_enabled()
                 && self.editor_is_single_line()
                 && !self.history.is_empty() =>
             {
@@ -469,14 +494,14 @@ impl AppUi {
             KeyEvent {
                 code: KeyCode::Down,
                 ..
-            } if self.input_active()
+            } if self.editor_enabled()
                 && self.editor_is_single_line()
                 && !self.history.is_empty() =>
             {
                 self.history_down();
                 None
             }
-            key if self.input_active() => {
+            key if self.editor_enabled() => {
                 self.editor_events.on_key_event(key, &mut self.editor);
                 None
             }
@@ -571,7 +596,7 @@ impl AppUi {
     }
 
     fn pane_height(&self) -> u16 {
-        let input_rows = if self.input_active() {
+        let input_rows = if self.editor_enabled() {
             self.editor_visible_line_count() as u16 + editor_status_height()
         } else {
             1 + editor_status_height()
@@ -580,6 +605,14 @@ impl AppUi {
     }
 
     fn input_active(&self) -> bool {
+        self.editor_enabled()
+    }
+
+    fn editor_enabled(&self) -> bool {
+        !matches!(self.status, KernelStatus::Disconnected)
+    }
+
+    fn submit_ready(&self) -> bool {
         matches!(
             self.status,
             KernelStatus::Idle | KernelStatus::AwaitingInput

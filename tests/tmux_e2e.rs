@@ -93,6 +93,20 @@ fn multiline_paste_preserves_all_lines() {
 
 #[test]
 #[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
+fn can_compose_while_kernel_is_busy() {
+    let output = run_repro(
+        "compose-while-busy",
+        "compose-while-busy",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    );
+
+    assert_contains(&output.after, "In [1]: import time; time.sleep(3); 42");
+    assert_contains(&output.after, "1 1+1");
+    assert_contains(&output.after, "INS  In [2]  Ctrl-P palette  Kernel busy. Ctrl-C to interrupt");
+}
+
+#[test]
+#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn shift_enter_creates_multiline_editor() {
     let output = run_repro(
         "shift-enter",

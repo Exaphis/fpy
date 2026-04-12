@@ -9,8 +9,8 @@ WIDTH="${TMUX_SIZE%x*}"
 HEIGHT="${TMUX_SIZE#*x}"
 PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
 FPY_CMD="${FPY_CMD:-cargo run -- run --python $PYTHON_BIN}"
-PRE_INPUT="${PRE_INPUT:-1+1}"
-INPUTS="${INPUTS:-$PRE_INPUT}"
+PRE_INPUT="${PRE_INPUT-1+1}"
+INPUTS="${INPUTS-$PRE_INPUT}"
 STARTUP_WAIT="${STARTUP_WAIT:-2}"
 PRE_INPUT_WAIT="${PRE_INPUT_WAIT:-1}"
 EXIT_WAIT="${EXIT_WAIT:-1}"
@@ -91,6 +91,11 @@ case "$ACTION" in
   paste)
     tmux set-buffer -b fpy-repro "$PASTE_TEXT"
     tmux paste-buffer -p -t "$SESSION" -b fpy-repro
+    ;;
+  compose-while-busy)
+    tmux send-keys -t "$SESSION" "import time; time.sleep(3); 42" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l "1+1"
     ;;
   vim-open-below)
     tmux send-keys -t "$SESSION" Escape
