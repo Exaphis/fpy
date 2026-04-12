@@ -10,6 +10,7 @@ use crossterm::queue;
 use crossterm::style::Print;
 use crossterm::terminal::Clear;
 use crossterm::terminal::ClearType;
+use crossterm::terminal::ScrollUp;
 use ratatui::backend::Backend;
 
 use crate::custom_terminal::Terminal;
@@ -23,6 +24,41 @@ where
     let lines = transcript_lines(text);
     let wrap_width = area.width.max(1) as usize;
     let rendered_rows = rendered_line_count(&lines, wrap_width);
+    let max_top = screen_size
+        .height
+        .saturating_sub(area.height.min(screen_size.height.max(1)));
+
+    if area.y == max_top && area.y > 0 {
+        let history_bottom = area.y.saturating_sub(1);
+        let start_row = area.y.saturating_sub(rendered_rows.min(area.y));
+        let writer = terminal.backend_mut();
+
+        queue!(
+            writer,
+            Print(set_scroll_region(0, history_bottom)),
+            MoveTo(0, history_bottom),
+            ScrollUp(rendered_rows),
+            MoveTo(0, start_row)
+        )?;
+
+        for (index, line) in lines.iter().enumerate() {
+            if index > 0 {
+                queue!(writer, Print("\r\n"))?;
+            }
+            write_history_line(writer, line, wrap_width)?;
+        }
+
+        queue!(
+            writer,
+            Print(reset_scroll_region()),
+            MoveTo(0, area.y),
+            Clear(ClearType::UntilNewLine)
+        )?;
+
+        std::io::Write::flush(writer)?;
+        terminal.invalidate_viewport();
+        return Ok(());
+    }
 
     {
         let writer = terminal.backend_mut();
@@ -40,13 +76,22 @@ where
         std::io::Write::flush(writer)?;
     }
 
-    let max_top = screen_size
-        .height
-        .saturating_sub(area.height.min(screen_size.height.max(1)));
     area.y = area.y.saturating_add(rendered_rows).min(max_top);
     terminal.set_viewport_area(area);
     terminal.invalidate_viewport();
     Ok(())
+}
+
+fn set_scroll_region(top: u16, bottom: u16) -> String {
+    format!(
+        "\x1b[{};{}r",
+        top.saturating_add(1),
+        bottom.saturating_add(1)
+    )
+}
+
+fn reset_scroll_region() -> &'static str {
+    "\x1b[r"
 }
 
 pub(crate) fn transcript_lines(text: &str) -> Vec<String> {

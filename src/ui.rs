@@ -576,7 +576,7 @@ impl AppUi {
         let input_rows = if self.input_active() {
             self.editor_visible_line_count() as u16 + EDITOR_STATUS_HEIGHT
         } else {
-            1
+            1 + EDITOR_STATUS_HEIGHT
         };
         viewport_height_for_editor(input_rows, self.palette_open)
     }
@@ -1015,8 +1015,8 @@ mod tests {
     use super::{
         build_editor_state, editor_gutter_lines, editor_mode_badge, editor_syntax_highlighter,
         highlighted_execute_input, line_number_gutter_lines, move_editor_to_row,
-        prompt_gutter_lines, prompt_prefixes, rendered_line_count, status_label,
-        status_throbber, strip_ansi,
+        prompt_gutter_lines, prompt_prefixes, rendered_line_count, status_label, status_throbber,
+        strip_ansi,
     };
     use crate::insert_history::transcript_lines;
     use crate::kernel::KernelStatus;

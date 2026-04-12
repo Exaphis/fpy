@@ -181,7 +181,7 @@ impl KernelSession {
         };
 
         match local.child.try_wait()? {
-            Some(status) => Ok(Some(format!("kernel exited with status {status}"))),
+            Some(status) => Ok(Some(local_exit_message(status, local))),
             None => Ok(None),
         }
     }
@@ -451,6 +451,19 @@ fn startup_failure_message(
     format_diagnostic("Kernel startup failed", &details)
 }
 
+fn local_exit_message(status: std::process::ExitStatus, local: &LocalKernel) -> String {
+    let mut details = vec![
+        format!("Python: {}", local.launch.python),
+        format!("Status: {status}"),
+    ];
+
+    if let Some(log_output) = read_startup_log(local.startup_log.path()) {
+        details.push(format!("Kernel stderr:\n{log_output}"));
+    }
+
+    format_diagnostic("Kernel exited unexpectedly", &details)
+}
+
 fn startup_timeout_message(local: &LocalKernel, parse_error: Option<&anyhow::Error>) -> String {
     let mut details = vec![
         format!("Python: {}", local.launch.python),
@@ -662,7 +675,9 @@ mod tests {
     use serde_json::json;
     use tempfile::{NamedTempFile, TempDir};
 
-    use super::{LaunchConfig, LocalKernel, append_startup_context, pick_text_payload};
+    use super::{
+        LaunchConfig, LocalKernel, append_startup_context, local_exit_message, pick_text_payload,
+    };
 
     #[test]
     fn prefers_plain_text_payloads() {
@@ -703,5 +718,34 @@ mod tests {
         let message = details.join("\n");
 
         assert!(message.contains("No module named ipykernel"));
+    }
+
+    #[tokio::test]
+    async fn includes_stderr_in_local_exit_message() {
+        let startup_log = NamedTempFile::new().expect("startup log");
+        std::fs::write(startup_log.path(), "Segmentation fault: 11").expect("write log");
+
+        let mut child = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 139")
+            .spawn()
+            .expect("spawn");
+        let status = child.wait().await.expect("wait");
+
+        let local = LocalKernel {
+            child,
+            _connection_dir: TempDir::new().expect("connection dir"),
+            connection_file: PathBuf::from("/tmp/kernel-connection.json"),
+            startup_log,
+            launch: LaunchConfig {
+                python: "python3".to_string(),
+                kernel_args: Vec::new(),
+            },
+        };
+
+        let message = local_exit_message(status, &local);
+        assert!(message.contains("Kernel exited unexpectedly"));
+        assert!(message.contains("Status:"));
+        assert!(message.contains("Segmentation fault: 11"));
     }
 }
