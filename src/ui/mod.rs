@@ -492,7 +492,7 @@ impl AppUi {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.submit_ready() {
-                    self.reset_editor();
+                    let _ = self.clear_editor_view();
                     None
                 } else {
                     Some(UiAction::Interrupt)
@@ -597,7 +597,7 @@ impl AppUi {
                     PaletteAction::InterruptKernel => Some(UiAction::Interrupt),
                     PaletteAction::RestartKernel => Some(UiAction::Restart),
                     PaletteAction::ClearInput => {
-                        self.reset_editor();
+                        let _ = self.clear_editor_view();
                         None
                     }
                     PaletteAction::ShowConnectionInfo => Some(UiAction::ShowConnectionInfo),
@@ -626,7 +626,7 @@ impl AppUi {
             }
             Some(_) => {
                 self.history_index = None;
-                self.reset_editor();
+                let _ = self.clear_editor_view();
             }
             None => {}
         }
@@ -634,9 +634,9 @@ impl AppUi {
 
     fn sync_viewport(&mut self) -> Result<()> {
         let (width, height) = terminal::size()?;
-        self.pane_top = self.pane_top.min(max_pane_top(height, 1));
         let pane_height = self.pane_height().min(height.max(1));
-        let pane = pane_rect_at(width, height, self.pane_top, pane_height);
+        let pane_top = self.pane_top.min(max_pane_top(height, pane_height));
+        let pane = pane_rect_at(width, height, pane_top, pane_height);
         if pane != self.current_pane {
             self.scroll_history_for_pane_growth(self.current_pane, pane, height)?;
             self.clear_stale_pane_rows(self.current_pane, pane)?;
@@ -644,6 +644,7 @@ impl AppUi {
             terminal.set_viewport_area(pane);
             terminal.invalidate_viewport();
             self.current_pane = pane;
+            self.pane_top = pane.y;
         }
         Ok(())
     }
@@ -723,6 +724,13 @@ impl AppUi {
         let text = self.editor.lines.to_string();
         self.reset_editor();
         text
+    }
+
+    fn clear_editor_view(&mut self) -> Result<()> {
+        self.clear_current_pane_rows()?;
+        self.reset_editor();
+        self.terminal_mut()?.invalidate_viewport();
+        Ok(())
     }
 
     fn clear_stale_pane_rows(&mut self, old: Rect, new: Rect) -> Result<()> {

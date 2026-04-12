@@ -131,6 +131,36 @@ fn shift_enter_creates_multiline_editor() {
 }
 
 #[test]
+fn ctrl_c_after_multiline_resets_prompt_spacing() {
+    let Some(output) = run_repro(
+        "ctrl-c-multiline",
+        "ctrl-c-multiline",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_no_line_starts_with(&output.after, "2 ");
+    assert_line_contains_all(&output.after, &["1"]);
+    assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
+}
+
+#[test]
+fn ctrl_c_after_multiline_leaves_gap_below_prompt() {
+    let Some(output) = run_repro(
+        "ctrl-c-multiline-bottom",
+        "ctrl-c-multiline-bottom",
+        &[("TMUX_SIZE", "120x20"), ("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_line_contains_all(&output.after, &["1"]);
+    assert_line_contains_all(&output.after, &["INS", "In [5]", "Ctrl-P palette"]);
+    assert_blank_line_after_contains(&output.after, "Ctrl-P palette");
+}
+
+#[test]
 fn vim_open_below_grows_on_first_try() {
     let Some(output) = run_repro(
         "vim-open-below",
@@ -286,6 +316,29 @@ fn assert_line_contains_all(haystack: &str, needles: &[&str]) {
             .any(|line| needles.iter().all(|needle| line.contains(needle))),
         "expected some output line to contain all of {:?}:\n{}",
         needles,
+        haystack
+    );
+}
+
+fn assert_no_line_starts_with(haystack: &str, prefix: &str) {
+    assert!(
+        haystack.lines().all(|line| !line.starts_with(prefix)),
+        "expected no output line to start with {:?}:\n{}",
+        prefix,
+        haystack
+    );
+}
+
+fn assert_blank_line_after_contains(haystack: &str, needle: &str) {
+    let lines = haystack.lines().collect::<Vec<_>>();
+    let index = lines
+        .iter()
+        .position(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("expected to find line containing {:?} in output:\n{}", needle, haystack));
+    assert!(
+        index + 1 < lines.len() && lines[index + 1].trim().is_empty(),
+        "expected a blank line immediately after a line containing {:?}:\n{}",
+        needle,
         haystack
     );
 }

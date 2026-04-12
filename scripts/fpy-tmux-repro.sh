@@ -88,6 +88,34 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     ;;
+  ctrl-c-multiline)
+    tmux send-keys -t "$SESSION" -l "abc"
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    sleep 0.2
+    tmux send-keys -t "$SESSION" -l "def"
+    sleep 0.2
+    tmux send-keys -t "$SESSION" C-c
+    ;;
+  ctrl-c-multiline-bottom)
+    tmux send-keys -t "$SESSION" -l "!ls -lah"
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l "!ls -lah"
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l "!ls -lah"
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l "!ls -lah"
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l "abc"
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    sleep 0.2
+    tmux send-keys -t "$SESSION" -l "def"
+    sleep 0.2
+    tmux send-keys -t "$SESSION" C-c
+    ;;
   paste)
     tmux set-buffer -b fpy-repro "$PASTE_TEXT"
     tmux paste-buffer -p -t "$SESSION" -b fpy-repro
