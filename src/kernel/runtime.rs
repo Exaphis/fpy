@@ -66,10 +66,6 @@ impl Runtime {
                             command_codec.message("input_reply", None, json!({ "value": value }));
                         send_message(&mut stdin_send, &command_codec, &message).await
                     }
-                    KernelCommand::KernelInfo => {
-                        let message = command_codec.message("kernel_info_request", None, json!({}));
-                        send_message(&mut shell_send, &command_codec, &message).await
-                    }
                     KernelCommand::Shutdown => {
                         let message = command_codec.message(
                             "shutdown_request",
@@ -102,8 +98,7 @@ impl Runtime {
         let iopub_task = spawn_recv_loop(iopub, codec, event_tx.clone(), iopub_message_to_events);
 
         let _ = event_tx.send(KernelEvent::Connected(connection.summary()));
-        let _ = event_tx.send(KernelEvent::Status(KernelStatus::Connecting));
-        let _ = command_tx.send(KernelCommand::KernelInfo);
+        let _ = event_tx.send(KernelEvent::Status(KernelStatus::Idle));
 
         Ok(Self {
             connection,

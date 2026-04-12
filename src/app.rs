@@ -170,6 +170,7 @@ fn activate_bootstrap_result(
         .map_err(|_| anyhow::anyhow!("kernel startup task terminated unexpectedly"))?;
     let (kernel, kernel_events) = bootstrap_result?;
     ui.set_connection_summary(kernel.connection_summary());
+    ui.mark_session_ready();
     Ok(BootstrapOutcome::Activated(Box::new(ActiveSession {
         kernel,
         kernel_events,
@@ -330,7 +331,7 @@ async fn handle_ready_ui_action(
             match kernel.restart().await {
                 Ok(()) => {
                     ui.set_connection_summary(kernel.connection_summary());
-                    ui.set_status(KernelStatus::Connecting);
+                    ui.mark_session_ready();
                     ui.insert_transcript("kernel restarted")?;
                 }
                 Err(error) => ui.insert_transcript(format!("restart unavailable: {error}"))?,

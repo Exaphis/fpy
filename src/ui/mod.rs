@@ -95,6 +95,7 @@ pub struct AppUi {
     status: KernelStatus,
     connection_summary: String,
     throbber_state: ThrobberState,
+    session_ready: bool,
     restored: bool,
 }
 
@@ -137,6 +138,7 @@ impl AppUi {
             status: KernelStatus::Connecting,
             connection_summary,
             throbber_state: ThrobberState::default(),
+            session_ready: false,
             restored: false,
         })
     }
@@ -150,7 +152,13 @@ impl AppUi {
     }
 
     pub fn set_status(&mut self, status: KernelStatus) {
+        if self.session_ready && status == KernelStatus::Connecting {
+            return;
+        }
         self.status = status;
+        if status == KernelStatus::Disconnected {
+            self.session_ready = false;
+        }
     }
 
     pub fn set_last_execution_count(&mut self, count: Option<u32>) {
@@ -171,6 +179,11 @@ impl AppUi {
 
     pub fn clear_input_request(&mut self) {
         self.awaiting_input = None;
+    }
+
+    pub fn mark_session_ready(&mut self) {
+        self.session_ready = true;
+        self.status = KernelStatus::Idle;
     }
 
     pub fn insert_transcript(&mut self, text: impl Into<String>) -> Result<()> {
@@ -248,7 +261,11 @@ impl AppUi {
         let prompt_label = self.prompt_label();
         let visible_lines = self.editor_visible_line_count();
         let status = self.status;
-        let transient_status = transient_status_label(status);
+        let transient_status = if self.session_ready && status == KernelStatus::Connecting {
+            None
+        } else {
+            transient_status_label(status)
+        };
 
         let AppUi {
             terminal,
@@ -613,10 +630,8 @@ impl AppUi {
     }
 
     fn submit_ready(&self) -> bool {
-        matches!(
-            self.status,
-            KernelStatus::Idle | KernelStatus::AwaitingInput
-        )
+        self.session_ready
+            && !matches!(self.status, KernelStatus::Busy | KernelStatus::Disconnected)
     }
 
     fn prompt_label(&self) -> String {
@@ -627,7 +642,8 @@ impl AppUi {
     }
 
     fn status_spins(&self) -> bool {
-        matches!(self.status, KernelStatus::Connecting | KernelStatus::Busy)
+        matches!(self.status, KernelStatus::Busy)
+            || (self.status == KernelStatus::Connecting && !self.session_ready)
     }
 
     fn editor_visible_line_count(&self) -> usize {

@@ -59,7 +59,6 @@ pub enum KernelEvent {
 enum KernelCommand {
     Execute { code: String },
     InputReply { value: String },
-    KernelInfo,
     Shutdown,
 }
 

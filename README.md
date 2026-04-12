@@ -90,7 +90,8 @@ scripts/benchmark-startup.sh
 
 That benchmark uses `tmux` to build `fpy` in release mode and measure:
 
-- time to a ready prompt
+- time to usable input
+- time to safe submission
 - time to the first successful `1+1` result
 
 for both `target/release/fpy run --python ...` and plain `ipython`.

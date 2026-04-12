@@ -71,9 +71,13 @@ For startup latency comparisons against plain IPython, use:
 scripts/benchmark-startup.sh
 ```
 
-That benchmark uses `tmux`, builds `fpy` in release mode, and reports both
-prompt-ready time and time to the first successful `1+1` result for `fpy`
-and `ipython`.
+That benchmark uses `tmux`, builds `fpy` in release mode, and reports:
+
+- time to usable input
+- time to safe submission
+- time to the first successful `1+1` result
+
+for both `fpy` and `ipython`.
 
 There is also an opt-in Rust integration suite in [`tests/tmux_e2e.rs`](tests/tmux_e2e.rs):
 

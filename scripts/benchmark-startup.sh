@@ -48,7 +48,26 @@ capture_pane() {
   tmux capture-pane -pt "$1" -S "-$CAPTURE_LINES"
 }
 
-pane_is_ready() {
+pane_has_usable_input() {
+  bench_name=$1
+  pane_text=$2
+  case "$bench_name" in
+    fpy)
+      printf '%s' "$pane_text" | grep -F "Ctrl-P palette" >/dev/null 2>&1
+      return $?
+      ;;
+    ipython)
+      printf '%s' "$pane_text" | grep -E '(^|[[:space:]])In \[[0-9]+\]:' >/dev/null 2>&1
+      return $?
+      ;;
+    *)
+      printf 'unknown benchmark target: %s\n' "$bench_name" >&2
+      exit 2
+      ;;
+  esac
+}
+
+pane_is_submit_ready() {
   bench_name=$1
   pane_text=$2
   case "$bench_name" in
@@ -59,7 +78,7 @@ pane_is_ready() {
       return 0
       ;;
     ipython)
-      printf '%s' "$pane_text" | grep -E '(^|[[:space:]])In \[[0-9]+\]:' >/dev/null 2>&1
+      pane_has_usable_input "$bench_name" "$pane_text"
       return $?
       ;;
     *)
@@ -98,24 +117,55 @@ run_sample() {
   start_ns=$(now_ns)
   tmux send-keys -t "$session" "$command_text" Enter
 
-  ready_ns=
+  input_ready_ns=
+  input_ready_streak=0
   while :; do
     pane_text=$(capture_pane "$session")
-    if pane_is_ready "$bench_name" "$pane_text"; then
-      ready_ns=$(now_ns)
-      break
+    if pane_has_usable_input "$bench_name" "$pane_text"; then
+      input_ready_streak=$((input_ready_streak + 1))
+      if [ "$input_ready_streak" -ge 2 ]; then
+        input_ready_ns=$(now_ns)
+        break
+      fi
+    else
+      input_ready_streak=0
     fi
     if [ "$(now_ns)" -ge "$timeout_deadline" ]; then
-      printf '%s\n' "$pane_text" > "$log_prefix-timeout-ready.log"
+      printf '%s\n' "$pane_text" > "$log_prefix-timeout-input-ready.log"
       cleanup_session "$session"
-      printf 'timed out waiting for %s prompt readiness; pane saved to %s-timeout-ready.log\n' \
+      printf 'timed out waiting for %s usable input; pane saved to %s-timeout-input-ready.log\n' \
         "$bench_name" "$log_prefix" >&2
       exit 1
     fi
     sleep "$POLL_SECONDS"
   done
 
-  tmux send-keys -t "$session" "1+1" Enter
+  tmux send-keys -t "$session" -l "1+1"
+
+  submit_ready_ns=
+  submit_ready_streak=0
+  while :; do
+    pane_text=$(capture_pane "$session")
+    if pane_is_submit_ready "$bench_name" "$pane_text"; then
+      submit_ready_streak=$((submit_ready_streak + 1))
+      if [ "$submit_ready_streak" -ge 2 ]; then
+        submit_ready_ns=$(now_ns)
+        break
+      fi
+    else
+      submit_ready_streak=0
+    fi
+    if [ "$(now_ns)" -ge "$timeout_deadline" ]; then
+      printf '%s\n' "$pane_text" > "$log_prefix-timeout-submit-ready.log"
+      cleanup_session "$session"
+      printf 'timed out waiting for %s submit readiness; pane saved to %s-timeout-submit-ready.log\n' \
+        "$bench_name" "$log_prefix" >&2
+      exit 1
+    fi
+    sleep "$POLL_SECONDS"
+  done
+
+  tmux send-keys -t "$session" Enter
 
   result_ns=
   while :; do
@@ -136,9 +186,16 @@ run_sample() {
 
   cleanup_session "$session"
 
-  ready_ms=$(( (ready_ns - start_ns) / 1000000 ))
+  input_ready_ms=$(( (input_ready_ns - start_ns) / 1000000 ))
+  submit_ready_ms=$(( (submit_ready_ns - start_ns) / 1000000 ))
   first_result_ms=$(( (result_ns - start_ns) / 1000000 ))
-  printf '%s %s %s\n' "$sample_index" "$ready_ms" "$first_result_ms"
+  submit_to_result_ms=$(( (result_ns - submit_ready_ns) / 1000000 ))
+  printf '%s %s %s %s %s\n' \
+    "$sample_index" \
+    "$input_ready_ms" \
+    "$submit_ready_ms" \
+    "$first_result_ms" \
+    "$submit_to_result_ms"
 }
 
 summarize_samples() {
@@ -146,35 +203,53 @@ summarize_samples() {
   sample_file=$2
   awk -v name="$bench_name" '
     BEGIN {
-      ready_sum = 0;
+      input_sum = 0;
+      submit_sum = 0;
       result_sum = 0;
-      ready_min = -1;
-      ready_max = 0;
+      submit_to_result_sum = 0;
+      input_min = -1;
+      input_max = 0;
+      submit_min = -1;
+      submit_max = 0;
       result_min = -1;
       result_max = 0;
+      submit_to_result_min = -1;
+      submit_to_result_max = 0;
       count = 0;
     }
     {
       count += 1;
-      ready = $2;
-      result = $3;
-      ready_sum += ready;
+      input = $2;
+      submit = $3;
+      result = $4;
+      submit_to_result = $5;
+      input_sum += input;
+      submit_sum += submit;
       result_sum += result;
-      if (ready_min == -1 || ready < ready_min) ready_min = ready;
-      if (ready > ready_max) ready_max = ready;
+      submit_to_result_sum += submit_to_result;
+      if (input_min == -1 || input < input_min) input_min = input;
+      if (input > input_max) input_max = input;
+      if (submit_min == -1 || submit < submit_min) submit_min = submit;
+      if (submit > submit_max) submit_max = submit;
       if (result_min == -1 || result < result_min) result_min = result;
       if (result > result_max) result_max = result;
+      if (submit_to_result_min == -1 || submit_to_result < submit_to_result_min) submit_to_result_min = submit_to_result;
+      if (submit_to_result > submit_to_result_max) submit_to_result_max = submit_to_result;
     }
     END {
-      printf "%s %d %d %d %d %d %d %d\n",
+      printf "%s %d %d %d %d %d %d %d %d %d %d %d\n",
         name,
         count,
-        ready_sum / count,
-        ready_min,
-        ready_max,
+        input_sum / count,
+        input_min,
+        input_max,
+        submit_sum / count,
+        submit_min,
+        submit_max,
         result_sum / count,
         result_min,
-        result_max;
+        result_max,
+        submit_to_result_sum / count;
     }
   ' "$sample_file"
 }
@@ -184,34 +259,48 @@ print_summary() {
   ipython_summary=$2
 
   set -- $fpy_summary
-  fpy_ready_avg=$3
-  fpy_ready_min=$4
-  fpy_ready_max=$5
-  fpy_result_avg=$6
-  fpy_result_min=$7
-  fpy_result_max=$8
+  fpy_input_avg=$3
+  fpy_input_min=$4
+  fpy_input_max=$5
+  fpy_submit_avg=$6
+  fpy_submit_min=$7
+  fpy_submit_max=$8
+  fpy_result_avg=$9
+  fpy_result_min=${10}
+  fpy_result_max=${11}
+  fpy_submit_to_result_avg=${12}
 
   set -- $ipython_summary
-  ipython_ready_avg=$3
-  ipython_ready_min=$4
-  ipython_ready_max=$5
-  ipython_result_avg=$6
-  ipython_result_min=$7
-  ipython_result_max=$8
+  ipython_input_avg=$3
+  ipython_input_min=$4
+  ipython_input_max=$5
+  ipython_submit_avg=$6
+  ipython_submit_min=$7
+  ipython_submit_max=$8
+  ipython_result_avg=$9
+  ipython_result_min=${10}
+  ipython_result_max=${11}
+  ipython_submit_to_result_avg=${12}
 
-  ready_ratio=$(awk -v a="$fpy_ready_avg" -v b="$ipython_ready_avg" 'BEGIN { printf "%.2f", a / b }')
+  input_ratio=$(awk -v a="$fpy_input_avg" -v b="$ipython_input_avg" 'BEGIN { printf "%.2f", a / b }')
+  submit_ratio=$(awk -v a="$fpy_submit_avg" -v b="$ipython_submit_avg" 'BEGIN { printf "%.2f", a / b }')
   result_ratio=$(awk -v a="$fpy_result_avg" -v b="$ipython_result_avg" 'BEGIN { printf "%.2f", a / b }')
 
   printf '\nSummary\n'
-  printf 'target   ready_avg_ms ready_min_ms ready_max_ms first_result_avg_ms first_result_min_ms first_result_max_ms\n'
-  printf 'fpy      %12s %12s %12s %19s %19s %19s\n' \
-    "$fpy_ready_avg" "$fpy_ready_min" "$fpy_ready_max" \
-    "$fpy_result_avg" "$fpy_result_min" "$fpy_result_max"
-  printf 'ipython  %12s %12s %12s %19s %19s %19s\n' \
-    "$ipython_ready_avg" "$ipython_ready_min" "$ipython_ready_max" \
-    "$ipython_result_avg" "$ipython_result_min" "$ipython_result_max"
+  printf 'target   input_avg_ms input_min_ms input_max_ms submit_avg_ms submit_min_ms submit_max_ms first_result_avg_ms first_result_min_ms first_result_max_ms submit_to_result_avg_ms\n'
+  printf 'fpy      %12s %12s %12s %13s %13s %13s %19s %19s %19s %23s\n' \
+    "$fpy_input_avg" "$fpy_input_min" "$fpy_input_max" \
+    "$fpy_submit_avg" "$fpy_submit_min" "$fpy_submit_max" \
+    "$fpy_result_avg" "$fpy_result_min" "$fpy_result_max" \
+    "$fpy_submit_to_result_avg"
+  printf 'ipython  %12s %12s %12s %13s %13s %13s %19s %19s %19s %23s\n' \
+    "$ipython_input_avg" "$ipython_input_min" "$ipython_input_max" \
+    "$ipython_submit_avg" "$ipython_submit_min" "$ipython_submit_max" \
+    "$ipython_result_avg" "$ipython_result_min" "$ipython_result_max" \
+    "$ipython_submit_to_result_avg"
   printf '\nRelative slowdown\n'
-  printf 'fpy ready_avg vs ipython: %sx\n' "$ready_ratio"
+  printf 'fpy input_avg vs ipython: %sx\n' "$input_ratio"
+  printf 'fpy submit_avg vs ipython: %sx\n' "$submit_ratio"
   printf 'fpy first_result_avg vs ipython: %sx\n' "$result_ratio"
 }
 
@@ -227,7 +316,8 @@ benchmark_target() {
     sample=$(run_sample "$bench_name" "$command_text" "$i")
     printf '%s\n' "$sample" >> "$sample_file"
     set -- $sample
-    printf '  sample %s: ready=%sms first_result=%sms\n' "$1" "$2" "$3" >&2
+    printf '  sample %s: input=%sms submit=%sms first_result=%sms submit_to_result=%sms\n' \
+      "$1" "$2" "$3" "$4" "$5" >&2
     i=$((i + 1))
   done
   summarize_samples "$bench_name" "$sample_file"
