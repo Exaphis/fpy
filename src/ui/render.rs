@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::cursor::position;
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
 };
@@ -88,22 +88,6 @@ pub(super) fn status_throbber(status: KernelStatus) -> Option<Throbber<'static>>
         ),
         _ => None,
     }
-}
-
-pub(super) fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - height_percent) / 2),
-        Constraint::Percentage(height_percent),
-        Constraint::Percentage((100 - height_percent) / 2),
-    ])
-    .split(area);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - width_percent) / 2),
-        Constraint::Percentage(width_percent),
-        Constraint::Percentage((100 - width_percent) / 2),
-    ])
-    .split(vertical[1])[1]
 }
 
 pub(super) fn editor_status_height() -> u16 {

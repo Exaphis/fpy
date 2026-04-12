@@ -114,6 +114,25 @@ case "$ACTION" in
   ctrl-l)
     tmux send-keys -t "$SESSION" C-l
     ;;
+  palette)
+    tmux send-keys -t "$SESSION" C-p
+    ;;
+  palette-cycle)
+    tmux send-keys -t "$SESSION" C-p
+    sleep 0.2
+    tmux send-keys -t "$SESSION" Escape
+    sleep 0.2
+    tmux send-keys -t "$SESSION" C-p
+    ;;
+  palette-move-cycle)
+    tmux send-keys -t "$SESSION" C-p
+    sleep 0.2
+    tmux send-keys -t "$SESSION" Down
+    sleep 0.2
+    tmux send-keys -t "$SESSION" Escape
+    sleep 0.2
+    tmux send-keys -t "$SESSION" C-p
+    ;;
   ctrl-d)
     tmux send-keys -t "$SESSION" C-d
     ;;

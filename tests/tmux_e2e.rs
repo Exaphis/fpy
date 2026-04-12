@@ -159,6 +159,54 @@ fn history_up_reruns_previous_cell() {
     assert_contains(&output.after, "Out[3]: 4");
 }
 
+#[test]
+fn palette_clears_underlying_empty_prompt() {
+    let Some(output) = run_repro(
+        "palette-empty",
+        "palette",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "Command Palette");
+    assert_line_count(&output.after, "INS  In [1]  Ctrl-P palette", 1);
+    assert_no_line_contains_all(&output.after, &["Ctrl-P palette", "│"]);
+}
+
+#[test]
+fn palette_close_reopen_does_not_leave_stale_status_cells() {
+    let Some(output) = run_repro(
+        "palette-cycle",
+        "palette-cycle",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "Command Palette");
+    assert_line_count(&output.after, "INS  In [1]  Ctrl-P palette", 1);
+    assert_no_line_contains_all(&output.after, &["Ctrl-P palette", "│"]);
+    assert_no_line_contains_all(&output.after, &["Quit", "In [1]"]);
+}
+
+#[test]
+fn palette_move_close_reopen_does_not_mix_with_status_row() {
+    let Some(output) = run_repro(
+        "palette-move-cycle",
+        "palette-move-cycle",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "Command Palette");
+    assert_line_count(&output.after, "INS  In [1]  Ctrl-P palette", 1);
+    assert_no_line_contains_all(&output.after, &["Ctrl-P palette", "│"]);
+    assert_no_line_contains_all(&output.after, &["Quit", "In [1]"]);
+    assert_no_line_contains_all(&output.after, &["Interrupt Kernel", "In [1]"]);
+}
+
 struct ReproOutput {
     #[allow(dead_code)]
     before: String,
@@ -215,6 +263,25 @@ fn assert_contains(haystack: &str, needle: &str) {
     assert!(
         haystack.contains(needle),
         "expected to find {needle:?} in output:\n{haystack}"
+    );
+}
+
+fn assert_line_count(haystack: &str, needle: &str, expected: usize) {
+    let count = haystack.lines().filter(|line| line.contains(needle)).count();
+    assert_eq!(
+        count, expected,
+        "expected {needle:?} to appear {expected} time(s) in output:\n{haystack}"
+    );
+}
+
+fn assert_no_line_contains_all(haystack: &str, needles: &[&str]) {
+    assert!(
+        haystack
+            .lines()
+            .all(|line| !needles.iter().all(|needle| line.contains(needle))),
+        "expected no output line to contain all of {:?}:\n{}",
+        needles,
+        haystack
     );
 }
 

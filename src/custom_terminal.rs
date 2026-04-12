@@ -37,6 +37,10 @@ impl Frame<'_> {
         self.viewport_area
     }
 
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
+        self.buffer
+    }
+
     pub fn render_widget<W: Widget>(&mut self, widget: W, area: Rect) {
         widget.render(area, self.buffer);
     }
@@ -104,6 +108,8 @@ where
     pub fn set_viewport_area(&mut self, area: Rect) {
         self.current_buffer_mut().resize(area);
         self.previous_buffer_mut().resize(area);
+        self.current_buffer_mut().reset();
+        self.previous_buffer_mut().reset();
         self.viewport_area = area;
     }
 

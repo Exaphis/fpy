@@ -25,7 +25,7 @@ use ratatui::{
     layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear as ClearWidget, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear as ClearWidget, Paragraph},
 };
 use std::io::{Write, stdout};
 use throbber_widgets_tui::ThrobberState;
@@ -36,9 +36,9 @@ use self::{
         editor_syntax_highlighter, editor_theme, indent_width, move_editor_to_row, status_label,
     },
     render::{
-        build_terminal, centered_rect, editor_status_height, editor_visible_line_count,
-        initial_pane_top, max_pane_top, pane_rect_at, status_line_for, status_throbber,
-        transient_status_label, viewport_height_for_editor,
+        build_terminal, editor_status_height, editor_visible_line_count, initial_pane_top,
+        max_pane_top, pane_rect_at, status_line_for, status_throbber, transient_status_label,
+        viewport_height_for_editor,
     },
     transcript::highlighted_execute_input,
 };
@@ -96,6 +96,7 @@ pub struct AppUi {
     connection_summary: String,
     throbber_state: ThrobberState,
     session_ready: bool,
+    last_palette_open: bool,
     restored: bool,
 }
 
@@ -139,6 +140,7 @@ impl AppUi {
             connection_summary,
             throbber_state: ThrobberState::default(),
             session_ready: false,
+            last_palette_open: false,
             restored: false,
         })
     }
@@ -267,6 +269,11 @@ impl AppUi {
             transient_status_label(status)
         };
 
+        if palette_open != self.last_palette_open {
+            self.clear_current_pane_rows()?;
+            self.terminal_mut()?.invalidate_viewport();
+        }
+
         let AppUi {
             terminal,
             throbber_state,
@@ -285,30 +292,75 @@ impl AppUi {
         terminal.draw(|frame| {
             let area = frame.area();
             if input_active {
-                let [editor_area, status_area] = Layout::vertical([
+                let [content_area, status_area] = Layout::vertical([
                     Constraint::Min(1),
                     Constraint::Length(editor_status_height()),
                 ])
                 .areas(area);
-                let gutter_width =
-                    editor_gutter_width(&awaiting_input, visible_lines).min(editor_area.width);
-                let [gutter_area, content_area] =
-                    Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(1)])
-                        .areas(editor_area);
-                let gutter_lines = editor_gutter_lines(
-                    &awaiting_input,
-                    gutter_area.height as usize,
-                    visible_lines,
-                );
-                frame.render_widget(Paragraph::new(gutter_lines), gutter_area);
+                if palette_open {
+                    frame.render_widget(ClearWidget, area);
+                    let palette_width = content_area.width.min(56).max(24);
+                    let palette_height = content_area.height.max(3);
+                    let palette_area = Rect::new(
+                        content_area.x,
+                        content_area.y,
+                        palette_width,
+                        palette_height,
+                    );
+                    frame.render_widget(
+                        Block::default()
+                            .title("Command Palette")
+                            .borders(Borders::ALL),
+                        palette_area,
+                    );
 
-                let editor_view = EditorView::new(editor)
-                    .theme(editor_theme())
-                    .tab_width(indent_width())
-                    .wrap(false)
-                    .syntax_highlighter(editor_syntax_highlighter())
-                    .single_line(false);
-                frame.render_widget(editor_view, content_area);
+                    let inner = palette_area.inner(Margin {
+                        vertical: 1,
+                        horizontal: 1,
+                    });
+                    let inner_width = usize::from(inner.width);
+                    let buffer = frame.buffer_mut();
+                    for row in 0..inner.height as usize {
+                        let (text, style) = if let Some(action) = palette_items().get(row).copied() {
+                            let style = if row == palette_index {
+                                Style::default().fg(Color::Black).bg(Color::Yellow)
+                            } else {
+                                Style::default()
+                            };
+                            let text = if inner_width == 0 {
+                                action.label().to_string()
+                            } else {
+                                format!("{:<width$}", action.label(), width = inner_width)
+                            };
+                            (text, style)
+                        } else {
+                            (" ".repeat(inner_width), Style::default())
+                        };
+                        buffer.set_stringn(inner.x, inner.y + row as u16, text, inner_width, style);
+                    }
+                } else {
+                    frame.render_widget(ClearWidget, content_area);
+                    frame.render_widget(ClearWidget, status_area);
+                    let gutter_width =
+                        editor_gutter_width(&awaiting_input, visible_lines).min(content_area.width);
+                    let [gutter_area, content_area] =
+                        Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(1)])
+                            .areas(content_area);
+                    let gutter_lines = editor_gutter_lines(
+                        &awaiting_input,
+                        gutter_area.height as usize,
+                        visible_lines,
+                    );
+                    frame.render_widget(Paragraph::new(gutter_lines), gutter_area);
+
+                    let editor_view = EditorView::new(editor)
+                        .theme(editor_theme())
+                        .tab_width(indent_width())
+                        .wrap(false)
+                        .syntax_highlighter(editor_syntax_highlighter())
+                        .single_line(false);
+                    frame.render_widget(editor_view, content_area);
+                }
                 if let Some(throbber) = status_throbber(status) {
                     let transient_width = transient_status
                         .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
@@ -340,7 +392,9 @@ impl AppUi {
                     );
                 }
 
-                if let Some(position) = editor.cursor_screen_position() {
+                if !palette_open
+                    && let Some(position) = editor.cursor_screen_position()
+                {
                     frame.set_cursor_position(position);
                 }
             } else if let Some(status_line) = status_line_for(status) {
@@ -348,39 +402,12 @@ impl AppUi {
             } else {
                 frame.render_widget(Paragraph::new(""), area);
             }
-
-            if palette_open {
-                let popup = centered_rect(60, 70, area);
-                frame.render_widget(ClearWidget, popup);
-                let items = palette_items()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, action)| {
-                        let style = if index == palette_index {
-                            Style::default().fg(Color::Black).bg(Color::Yellow)
-                        } else {
-                            Style::default()
-                        };
-                        ListItem::new(Line::from(Span::styled(action.label(), style)))
-                    })
-                    .collect::<Vec<_>>();
-                frame.render_widget(
-                    List::new(items).block(
-                        Block::default()
-                            .title("Command Palette")
-                            .borders(Borders::ALL),
-                    ),
-                    popup.inner(Margin {
-                        vertical: 0,
-                        horizontal: 0,
-                    }),
-                );
-            }
         })?;
 
         if self.status_spins() {
             self.throbber_state.calc_next();
         }
+        self.last_palette_open = palette_open;
 
         Ok(())
     }
@@ -688,6 +715,21 @@ impl AppUi {
                 execute!(handle, MoveTo(0, row), Clear(ClearType::UntilNewLine))?;
             }
         }
+        Ok(())
+    }
+
+    fn clear_current_pane_rows(&mut self) -> Result<()> {
+        let pane = self.current_pane;
+        if pane.is_empty() {
+            return Ok(());
+        }
+
+        let terminal = self.terminal_mut()?;
+        let handle = terminal.backend_mut();
+        for row in pane.y..pane.bottom() {
+            execute!(handle, MoveTo(0, row), Clear(ClearType::UntilNewLine))?;
+        }
+        handle.flush()?;
         Ok(())
     }
 
