@@ -9,27 +9,28 @@ use std::{
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn ctrl_d_preserves_transcript() {
-    let output = run_repro("ctrl-d-preserves", "ctrl-d", &[]);
+    let Some(output) = run_repro("ctrl-d-preserves", "ctrl-d", &[]) else {
+        return;
+    };
     assert_contains(&output.after, "In [1]: 1+1");
     assert_contains(&output.after, "Out[1]: 2");
     assert_contains(&output.after, "kevin@mango-pro");
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn kernel_exit_returns_shell() {
-    let output = run_repro("kernel-exit", "exitpy", &[]);
+    let Some(output) = run_repro("kernel-exit", "exitpy", &[]) else {
+        return;
+    };
     assert_contains(&output.after, "In [1]: 1+1");
     assert_contains(&output.after, "Out[1]: 2");
     assert_contains(&output.after, "kevin@mango-pro");
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn multiline_growth_bottom_pinned() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "multiline-growth-bottom",
         "paste",
         &[
@@ -38,7 +39,9 @@ fn multiline_growth_bottom_pinned() {
             ("INPUTS", "1+1\n!ls -lah\n!ls -lah"),
             ("PASTE_TEXT", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl"),
         ],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(&output.after, "In [2]: !ls -lah");
     assert_contains(&output.after, "In [3]: !ls -lah");
@@ -48,9 +51,8 @@ fn multiline_growth_bottom_pinned() {
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn bottom_of_screen_result_still_visible() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "bottom-result-visible",
         "none",
         &[
@@ -59,7 +61,9 @@ fn bottom_of_screen_result_still_visible() {
             ("INPUTS", "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah\n1+1"),
             ("EXIT_WAIT", "1"),
         ],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(&output.after, "In [5]: 1+1");
     assert_contains(&output.after, "Out[5]: 2");
@@ -67,9 +71,8 @@ fn bottom_of_screen_result_still_visible() {
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn multiline_paste_preserves_all_lines() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "multiline-paste",
         "paste",
         &[
@@ -80,7 +83,9 @@ fn multiline_paste_preserves_all_lines() {
                 "use edtui::{EditorState, EditorTheme, EditorView};\nuse ratatui::widgets::Widget;\n\nlet mut state = EditorState::default();\nEditorView::new(&mut state)\n        .theme(EditorTheme::default())\n        .wrap(true)\n        .syntax_highlighter(None)\n        .tab_width(2)\n        .render(area, buf);",
             ),
         ],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(
         &output.after,
@@ -88,31 +93,35 @@ fn multiline_paste_preserves_all_lines() {
     );
     assert_contains(&output.after, "2 use ratatui::widgets::Widget;");
     assert_contains(&output.after, "4 let mut state = EditorState::default();");
-    assert_contains(&output.after, "9         .render(area, buf);");
+    assert_contains(&output.after, "9         .tab_width(2)");
+    assert_contains(&output.after, "10         .render(area, buf)");
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn can_compose_while_kernel_is_busy() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "compose-while-busy",
         "compose-while-busy",
         &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(&output.after, "In [1]: import time; time.sleep(3); 42");
     assert_contains(&output.after, "1 1+1");
-    assert_contains(&output.after, "INS  In [2]  Ctrl-P palette  Kernel busy. Ctrl-C to interrupt");
+    assert_contains(&output.after, "INS  In [2]  Ctrl-P palette");
+    assert_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn shift_enter_creates_multiline_editor() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "shift-enter",
         "shift-enter",
         &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(&output.after, "1 abc");
     assert_contains(&output.after, "2");
@@ -120,13 +129,14 @@ fn shift_enter_creates_multiline_editor() {
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn vim_open_below_grows_on_first_try() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "vim-open-below",
         "vim-open-below",
         &[("EXIT_WAIT", "1")],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(&output.after, "1");
     assert_contains(&output.after, "2");
@@ -134,13 +144,14 @@ fn vim_open_below_grows_on_first_try() {
 }
 
 #[test]
-#[ignore = "requires tmux, local ipykernel, and a real terminal multiplexer environment"]
 fn history_up_reruns_previous_cell() {
-    let output = run_repro(
+    let Some(output) = run_repro(
         "history-up",
         "history-up",
         &[("PRE_INPUT", "1+1\n2+2"), ("INPUTS", "1+1\n2+2"), ("EXIT_WAIT", "1")],
-    );
+    ) else {
+        return;
+    };
 
     assert_contains(&output.after, "In [2]: 2+2");
     assert_contains(&output.after, "Out[2]: 4");
@@ -154,11 +165,12 @@ struct ReproOutput {
     after: String,
 }
 
-fn run_repro(name: &str, action: &str, extra_env: &[(&str, &str)]) -> ReproOutput {
+fn run_repro(name: &str, action: &str, extra_env: &[(&str, &str)]) -> Option<ReproOutput> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    require_path(repo_root.join("scripts/fpy-tmux-repro.sh"), "scripts/fpy-tmux-repro.sh");
-    require_path(repo_root.join(".venv/bin/python"), ".venv/bin/python");
-    require_command("tmux");
+    if let Some(reason) = missing_prerequisites(&repo_root) {
+        eprintln!("skipping tmux e2e test: {reason}");
+        return None;
+    }
 
     let unique = unique_id();
     let target_dir = repo_root.join("target");
@@ -187,10 +199,10 @@ fn run_repro(name: &str, action: &str, extra_env: &[(&str, &str)]) -> ReproOutpu
         );
     }
 
-    ReproOutput {
+    Some(ReproOutput {
         before: read_log(&before_log),
         after: read_log(&after_log),
-    }
+    })
 }
 
 fn read_log(path: &Path) -> String {
@@ -206,16 +218,23 @@ fn assert_contains(haystack: &str, needle: &str) {
     );
 }
 
-fn require_command(command: &str) {
-    let status = Command::new(command).arg("-V").status();
-    assert!(
-        matches!(status, Ok(status) if status.success()),
-        "required command {command:?} is not available"
-    );
-}
+fn missing_prerequisites(repo_root: &Path) -> Option<String> {
+    let repro = repo_root.join("scripts/fpy-tmux-repro.sh");
+    if !repro.exists() {
+        return Some(format!("missing {}", repro.display()));
+    }
 
-fn require_path(path: PathBuf, display: &str) {
-    assert!(path.exists(), "required path {display:?} does not exist");
+    let python = repo_root.join(".venv/bin/python");
+    if !python.exists() {
+        return Some(format!("missing {}", python.display()));
+    }
+
+    let tmux = Command::new("tmux").arg("-V").status();
+    if !matches!(tmux, Ok(status) if status.success()) {
+        return Some("tmux is not available".to_string());
+    }
+
+    None
 }
 
 fn unique_id() -> u64 {

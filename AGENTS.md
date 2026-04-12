@@ -79,10 +79,10 @@ That benchmark uses `tmux`, builds `fpy` in release mode, and reports:
 
 for both `fpy` and `ipython`.
 
-There is also an opt-in Rust integration suite in [`tests/tmux_e2e.rs`](tests/tmux_e2e.rs):
+There is also a Rust integration suite in [`tests/tmux_e2e.rs`](tests/tmux_e2e.rs):
 
 ```bash
-cargo test --test tmux_e2e -- --ignored --nocapture
+cargo test --test tmux_e2e -- --nocapture
 ```
 
 Current covered regressions:
@@ -98,7 +98,7 @@ Current covered regressions:
 
 The Rust tests currently drive the shell repro harness rather than talking to `tmux` directly.
 
-If a new end-to-end TUI regression is reported, add a reproducing ignored test to
+If a new end-to-end TUI regression is reported, add a reproducing test to
 [`tests/tmux_e2e.rs`](tests/tmux_e2e.rs) before fixing the bug. Treat that as the default workflow
 for prompt-layout, paste, scrollback, exit-cleanup, and multiline-editor regressions.
 

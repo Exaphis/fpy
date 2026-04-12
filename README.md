@@ -79,7 +79,7 @@ Low-level repro harness:
 Rust integration tests:
 
 ```bash
-cargo test --test tmux_e2e -- --ignored --nocapture
+cargo test --test tmux_e2e -- --nocapture
 ```
 
 Startup benchmark:
@@ -105,7 +105,7 @@ PRE_INPUT='' INPUTS='' PASTE_TEXT='x = 1
 y = 2' scripts/fpy-tmux-repro.sh paste
 ```
 
-The ignored `tmux` e2e suite currently covers:
+The `tmux` e2e suite currently covers:
 
 - transcript preservation on `Ctrl-D`
 - shell recovery after `exit()`
