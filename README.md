@@ -35,7 +35,7 @@ Out of scope today:
 Run a local kernel:
 
 ```bash
-cargo run -- run --python .venv/bin/python
+cargo run -- run
 ```
 
 Attach to an existing kernel:
@@ -67,7 +67,7 @@ Useful commands:
 ```bash
 cargo test
 cargo clippy --all-targets --all-features
-cargo run -- run --python .venv/bin/python
+cargo run -- run
 ```
 
 For real terminal behavior, use tmux-based testing. It is much more reliable than judging layout from a captured non-interactive PTY.

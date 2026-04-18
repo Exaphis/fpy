@@ -7,7 +7,13 @@ SESSION="${SESSION:-fpy-repro-$$}"
 TMUX_SIZE="${TMUX_SIZE:-120x40}"
 WIDTH="${TMUX_SIZE%x*}"
 HEIGHT="${TMUX_SIZE#*x}"
-PYTHON_BIN="${PYTHON_BIN:-.venv/bin/python}"
+if [ -z "${PYTHON_BIN+x}" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PYTHON_BIN="$ROOT/.venv/bin/python"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
 FPY_CMD="${FPY_CMD:-cargo run -- run --python $PYTHON_BIN}"
 PRE_INPUT="${PRE_INPUT-1+1}"
 INPUTS="${INPUTS-$PRE_INPUT}"

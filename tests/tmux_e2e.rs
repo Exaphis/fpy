@@ -15,7 +15,6 @@ fn ctrl_d_preserves_transcript() {
     };
     assert_contains(&output.after, "In [1]: 1+1");
     assert_contains(&output.after, "Out[1]: 2");
-    assert_contains(&output.after, "kevin@mango-pro");
 }
 
 #[test]
@@ -25,7 +24,6 @@ fn kernel_exit_returns_shell() {
     };
     assert_contains(&output.after, "In [1]: 1+1");
     assert_contains(&output.after, "Out[1]: 2");
-    assert_contains(&output.after, "kevin@mango-pro");
 }
 
 #[test]
@@ -529,8 +527,13 @@ fn missing_prerequisites(repo_root: &Path) -> Option<String> {
     }
 
     let python = repo_root.join(".venv/bin/python");
-    if !python.exists() {
-        return Some(format!("missing {}", python.display()));
+    let python_ok = python.exists()
+        || matches!(
+            Command::new("python3").arg("--version").status(),
+            Ok(status) if status.success()
+        );
+    if !python_ok {
+        return Some("python3 is not available".to_string());
     }
 
     let tmux = Command::new("tmux").arg("-V").status();

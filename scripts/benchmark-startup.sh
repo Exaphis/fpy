@@ -7,10 +7,22 @@ SESSION_PREFIX="${SESSION_PREFIX:-fpy-startup-bench}"
 TMUX_SIZE="${TMUX_SIZE:-120x40}"
 WIDTH="${TMUX_SIZE%x*}"
 HEIGHT="${TMUX_SIZE#*x}"
-PYTHON_BIN="${PYTHON_BIN:-$ROOT/.venv/bin/python}"
+if [ -z "${PYTHON_BIN+x}" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PYTHON_BIN="$ROOT/.venv/bin/python"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
 FPY_BIN="${FPY_BIN:-$ROOT/target/release/fpy}"
 FPY_CMD="${FPY_CMD:-$FPY_BIN run --python $PYTHON_BIN}"
-IPYTHON_CMD="${IPYTHON_CMD:-$ROOT/.venv/bin/ipython}"
+if [ -z "${IPYTHON_CMD+x}" ]; then
+  if [ -x "$ROOT/.venv/bin/ipython" ]; then
+    IPYTHON_CMD="$ROOT/.venv/bin/ipython"
+  else
+    IPYTHON_CMD="ipython"
+  fi
+fi
 SAMPLES="${SAMPLES:-5}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-15}"
 POLL_SECONDS="${POLL_SECONDS:-0.02}"

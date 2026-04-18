@@ -4,7 +4,14 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RAW_LOG="${RAW_LOG:-$ROOT/target/fpy-harness.raw.log}"
 CLEAN_LOG="${CLEAN_LOG:-$ROOT/target/fpy-harness.clean.log}"
-CMD="${FPY_CMD:-cargo run -- run --python .venv/bin/python}"
+if [ -z "${PYTHON_BIN+x}" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then
+    PYTHON_BIN="$ROOT/.venv/bin/python"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
+CMD="${FPY_CMD:-cargo run -- run --python $PYTHON_BIN}"
 STARTUP_WAIT_MS="${STARTUP_WAIT_MS:-1500}"
 INPUT_TEXT="${INPUT_TEXT:-}"
 POST_CHECK="${POST_CHECK:-1}"
