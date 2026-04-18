@@ -122,6 +122,21 @@ Do not trust non-interactive PTY behavior for terminal bugs unless tmux shows th
 
 - Empty-line visual selection in `edtui` is effectively invisible because selections restyle existing spans, and empty lines have no spans. If that matters, fix it in the editor layer, not with transcript hacks.
 
+- Completions are intentionally deferred for now. The current recommendation is to implement a first pass in `fpy` itself
+  (Jupyter completion requests + `fpy`-owned suggestion UI/state) before deciding to fork or vendor `edtui`.
+  A fork becomes more attractive if completions need to feel editor-native or if more `edtui`-level fixes pile up.
+
+If `edtui` is forked or vendored later, the current likely candidates are:
+
+- General Vim count prefixes beyond the current local `nG` shim.
+- Empty-line visual selection rendering.
+- Empty-buffer semantics so `""` behaves like a one-row blank buffer.
+- Editor-native completion popup positioning relative to the cursor/viewport.
+- Completion insertion/acceptance integrated with editor cursor, selection, and undo semantics.
+- Completion navigation semantics in insert mode.
+- Inline ghost text / suggestion preview.
+- Better extension points for custom overlays, completion sources, or editor-side rendering.
+
 ## Practical Guidance
 
 - Prefer fixing terminal behavior with the smallest possible change in `ui/`, `insert_history/`, or `custom_terminal.rs`.
