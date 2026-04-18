@@ -467,7 +467,7 @@ impl AppUi {
                 .areas(area);
                 if palette_open {
                     frame.render_widget(ClearWidget, area);
-                    let palette_width = content_area.width.min(56).max(24);
+                    let palette_width = content_area.width.clamp(24, 56);
                     let palette_height = content_area.height.max(3);
                     let palette_area = Rect::new(
                         content_area.x,
