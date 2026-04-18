@@ -69,6 +69,28 @@ fn bottom_of_screen_result_still_visible() {
 }
 
 #[test]
+fn bottom_pinned_transcript_repaint_clears_stale_busy_status() {
+    let Some(output) = run_repro(
+        "bottom-pinned-stale-busy",
+        "none",
+        &[
+            ("TMUX_SIZE", "120x20"),
+            ("PRE_INPUT", "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah"),
+            ("INPUTS", "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah"),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [4]: !ls -lah");
+    assert_contains(&output.after, "[");
+    assert_line_contains_all(&output.after, &["INS", "In [5]", "Ctrl-P palette"]);
+    assert_not_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
+}
+
+#[test]
 fn runtime_line_appears_after_output() {
     let Some(output) = run_repro(
         "runtime-line",

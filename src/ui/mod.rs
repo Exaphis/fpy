@@ -267,6 +267,7 @@ pub struct AppUi {
     throbber_state: ThrobberState,
     session_ready: bool,
     last_palette_open: bool,
+    status_row_dirty: bool,
     restored: bool,
 }
 
@@ -306,6 +307,7 @@ impl AppUi {
             throbber_state: ThrobberState::default(),
             session_ready: false,
             last_palette_open: false,
+            status_row_dirty: false,
             restored: false,
         })
     }
@@ -354,13 +356,14 @@ impl AppUi {
 
     pub fn insert_transcript(&mut self, text: impl Into<String>) -> Result<()> {
         self.sync_viewport()?;
-        let pane = {
+        let new_pane = {
             let terminal = self.terminal_mut()?;
             insert_history_text(terminal, &text.into())?;
             terminal.viewport_area()
         };
-        self.current_pane = pane;
-        self.pane_top = pane.y;
+        self.current_pane = new_pane;
+        self.pane_top = new_pane.y;
+        self.status_row_dirty = true;
         Ok(())
     }
 
@@ -424,6 +427,11 @@ impl AppUi {
 
     pub fn redraw(&mut self) -> Result<()> {
         self.sync_viewport()?;
+        if self.status_row_dirty && self.input_active() {
+            self.clear_status_row()?;
+            self.terminal_mut()?.invalidate_viewport();
+            self.status_row_dirty = false;
+        }
         let awaiting_input = self.editor.pending_stdin().cloned();
         let palette_open = self.palette_open;
         let palette_index = self.palette_index;
@@ -868,6 +876,20 @@ impl AppUi {
         for row in pane.y..pane.bottom() {
             execute!(handle, MoveTo(0, row), Clear(ClearType::UntilNewLine))?;
         }
+        handle.flush()?;
+        Ok(())
+    }
+
+    fn clear_status_row(&mut self) -> Result<()> {
+        let pane = self.current_pane;
+        if pane.is_empty() {
+            return Ok(());
+        }
+
+        let status_row = pane.bottom().saturating_sub(1);
+        let terminal = self.terminal_mut()?;
+        let handle = terminal.backend_mut();
+        execute!(handle, MoveTo(0, status_row), Clear(ClearType::UntilNewLine))?;
         handle.flush()?;
         Ok(())
     }
