@@ -42,6 +42,7 @@ pub(super) fn move_editor_to_row(editor: &mut EditorState, target_row: usize) {
 
 pub(super) fn prompt_prefixes(awaiting_input: &Option<(String, bool)>) -> Option<(String, String)> {
     match awaiting_input {
+        Some((prompt, false)) if prompt.is_empty() => None,
         Some((prompt, true)) => {
             let first = format!("stdin (hidden) {prompt}");
             let continuation = " ".repeat(super::transcript::display_width(&first));
@@ -60,10 +61,10 @@ pub(super) fn editor_gutter_width(
     awaiting_input: &Option<(String, bool)>,
     visible_lines: usize,
 ) -> u16 {
-    if awaiting_input.is_some() {
-        0
-    } else if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
+    if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
         prompt_gutter_width(&prompt_prefix, &continuation_prefix)
+    } else if awaiting_input.is_some() {
+        0
     } else {
         line_number_gutter_width(visible_lines)
     }
@@ -74,10 +75,10 @@ pub(super) fn editor_gutter_lines(
     height: usize,
     visible_lines: usize,
 ) -> Vec<Line<'static>> {
-    if awaiting_input.is_some() {
-        Vec::new()
-    } else if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
+    if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
         prompt_gutter_lines(&prompt_prefix, &continuation_prefix, height)
+    } else if awaiting_input.is_some() {
+        Vec::new()
     } else {
         line_number_gutter_lines(height, visible_lines)
     }
@@ -248,9 +249,17 @@ mod tests {
     }
 
     #[test]
-    fn uses_no_gutter_for_stdin_prompt() {
-        assert_eq!(super::editor_gutter_width(&Some(("stdin> ".to_string(), false)), 2), 0);
-        assert!(editor_gutter_lines(&Some(("stdin> ".to_string(), false)), 2, 2).is_empty());
+    fn uses_no_gutter_for_empty_stdin_prompt() {
+        assert_eq!(super::editor_gutter_width(&Some(("".to_string(), false)), 2), 0);
+        assert!(editor_gutter_lines(&Some(("".to_string(), false)), 2, 2).is_empty());
+    }
+
+    #[test]
+    fn uses_prompt_gutter_for_nonempty_stdin_prompt() {
+        assert_eq!(super::editor_gutter_width(&Some(("(Pdb) ".to_string(), false)), 2), 6);
+        let lines = editor_gutter_lines(&Some(("(Pdb) ".to_string(), false)), 2, 2);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "(Pdb) ");
     }
 
     #[test]

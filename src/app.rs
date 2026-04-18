@@ -302,6 +302,7 @@ fn handle_kernel_event(
             }
         }
         KernelEvent::Error { traceback } => {
+            ui.clear_input_request();
             ui.insert_transcript(traceback.join("\n"))?;
         }
         KernelEvent::InputRequest { prompt, password } => {
@@ -331,7 +332,7 @@ fn handle_pending_ui_action(ui: &mut AppUi, action: UiAction) -> Result<bool> {
             ui.clear_screen()?;
             Ok(false)
         }
-        UiAction::Submit(_) | UiAction::ReplyInput(_) => {
+        UiAction::Submit(_) | UiAction::ReplyInput { .. } => {
             ui.insert_transcript("kernel is still starting")?;
             Ok(false)
         }
@@ -358,7 +359,14 @@ async fn handle_ready_ui_action(
             ui.set_status(KernelStatus::Busy);
             Ok(false)
         }
-        UiAction::ReplyInput(value) => {
+        UiAction::ReplyInput {
+            value,
+            prompt,
+            password,
+        } => {
+            if let Some(prompt) = prompt.filter(|_| !password) {
+                ui.insert_transcript(format!("{prompt}{value}"))?;
+            }
             kernel.send_input_reply(value)?;
             ui.set_status(KernelStatus::Busy);
             Ok(false)

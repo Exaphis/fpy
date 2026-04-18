@@ -162,6 +162,52 @@ fn ctrl_d_does_not_exit_during_stdin_prompt() {
 }
 
 #[test]
+fn ctrl_c_interrupts_during_stdin_prompt() {
+    let Some(output) = run_repro(
+        "stdin-ctrl-c",
+        "stdin-ctrl-c",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: input()");
+    assert_contains(&output.after, "KeyboardInterrupt");
+    assert_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+}
+
+#[test]
+fn pdb_prompt_and_commands_are_visible() {
+    let Some(output) = run_repro(
+        "pdb-basic",
+        "pdb-basic",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: import pdb; pdb.set_trace(); print(\"after\")");
+    assert!(
+        output.after.contains("(Pdb) where") || output.after.contains("ipdb> where"),
+        "expected a visible debugger prompt for `where` in output:\n{}",
+        output.after
+    );
+    assert!(
+        output.after.contains("(Pdb) p 1+1") || output.after.contains("ipdb> p 1+1"),
+        "expected a visible debugger prompt for `p 1+1` in output:\n{}",
+        output.after
+    );
+    assert_contains(&output.after, "2");
+    assert!(
+        output.after.contains("(Pdb) c") || output.after.contains("ipdb> c"),
+        "expected a visible debugger prompt for `c` in output:\n{}",
+        output.after
+    );
+    assert_contains(&output.after, "after");
+    assert_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+}
+
+#[test]
 fn multiline_paste_preserves_all_lines() {
     let Some(output) = run_repro(
         "multiline-paste",

@@ -74,7 +74,11 @@ impl PaletteAction {
 #[derive(Debug)]
 pub enum UiAction {
     Submit(String),
-    ReplyInput(String),
+    ReplyInput {
+        value: String,
+        prompt: Option<String>,
+        password: bool,
+    },
     Interrupt,
     ClearScreen,
     Exit,
@@ -498,7 +502,9 @@ impl AppUi {
                 modifiers,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.submit_ready() {
+                if self.awaiting_input.is_some() {
+                    Some(UiAction::Interrupt)
+                } else if self.submit_ready() {
                     let _ = self.clear_editor_view();
                     None
                 } else {
@@ -544,8 +550,13 @@ impl AppUi {
             } if self.submit_ready() => {
                 let text = self.take_editor_text();
                 if self.awaiting_input.is_some() {
-                    self.awaiting_input = None;
-                    Some(UiAction::ReplyInput(text))
+                    let (prompt, password) = self.awaiting_input.take().unwrap_or_default();
+                    let prompt = if prompt.is_empty() { None } else { Some(prompt) };
+                    Some(UiAction::ReplyInput {
+                        value: text,
+                        prompt,
+                        password,
+                    })
                 } else {
                     if text.trim().is_empty() {
                         return None;

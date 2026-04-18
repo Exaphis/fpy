@@ -155,6 +155,23 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" -l "x"
     tmux send-keys -t "$SESSION" Enter
     ;;
+  stdin-ctrl-c)
+    tmux send-keys -t "$SESSION" "input()" Enter
+    sleep 1
+    tmux send-keys -t "$SESSION" C-c
+    ;;
+  pdb-basic)
+    tmux send-keys -t "$SESSION" 'import pdb; pdb.set_trace(); print("after")' Enter
+    sleep 1
+    tmux send-keys -t "$SESSION" -l 'where'
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l 'p 1+1'
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.5
+    tmux send-keys -t "$SESSION" -l 'c'
+    tmux send-keys -t "$SESSION" Enter
+    ;;
   vim-open-below)
     tmux send-keys -t "$SESSION" Escape
     sleep 0.2
