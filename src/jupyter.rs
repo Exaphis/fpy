@@ -167,18 +167,37 @@ impl MessageCodec {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use serde_json::json;
+    use zeromq::ZmqMessage;
 
     use super::MessageCodec;
 
     #[test]
-    fn round_trips_jupyter_frames() {
+    fn round_trips_jupyter_frames_with_ids_and_buffers() {
         let codec = MessageCodec::new("secret".into());
-        let message = codec.message("execute_request", None, json!({ "code": "1 + 1" }));
+        let mut message = codec.message("execute_request", None, json!({ "code": "1 + 1" }));
+        message.ids = vec![Bytes::from_static(b"client-a"), Bytes::from_static(b"client-b")];
+        message.buffers = vec![Bytes::from_static(b"buffer")];
         let zmq = codec.encode_zmq(&message).expect("encode");
         let decoded = codec.decode(zmq).expect("decode");
 
+        assert_eq!(decoded.ids, message.ids);
+        assert_eq!(decoded.buffers, message.buffers);
         assert_eq!(decoded.header.msg_type, "execute_request");
         assert_eq!(decoded.content["code"], "1 + 1");
+    }
+
+    #[test]
+    fn rejects_messages_with_invalid_signatures() {
+        let codec = MessageCodec::new("secret".into());
+        let message = codec.message("execute_request", None, json!({ "code": "1 + 1" }));
+        let zmq = codec.encode_zmq(&message).expect("encode");
+        let mut frames = zmq.into_vec();
+        frames[5] = Bytes::from_static(br#"{"code":"1 + 2"}"#);
+        let tampered = ZmqMessage::try_from(frames).expect("rebuild tampered message");
+
+        let error = codec.decode(tampered).expect_err("tampered signature should fail");
+        assert!(error.to_string().contains("invalid Jupyter message signature"));
     }
 }

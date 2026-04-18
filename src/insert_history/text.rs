@@ -48,10 +48,23 @@ pub(crate) fn strip_ansi(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::transcript_lines;
+    use super::{rendered_line_count, transcript_lines, visible_width};
 
     #[test]
     fn preserves_real_blank_lines_but_not_trailing_line_terminator() {
         assert_eq!(transcript_lines("a\n\nb\n"), vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn normalizes_crlf_and_preserves_empty_input_as_one_line() {
+        assert_eq!(transcript_lines("a\r\nb\r"), vec!["a", "b"]);
+        assert_eq!(transcript_lines(""), vec![""]);
+    }
+
+    #[test]
+    fn counts_wrapped_rows_using_visible_width_without_ansi() {
+        let lines = vec!["\u{1b}[31mabcd\u{1b}[0m".to_string(), "".to_string()];
+        assert_eq!(visible_width(&lines[0]), 4);
+        assert_eq!(rendered_line_count(&lines, 3), 3);
     }
 }

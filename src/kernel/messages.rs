@@ -122,3 +122,95 @@ pub(super) fn pick_text_payload(content: &Value) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use serde_json::{Value, json};
+
+    use super::{iopub_message_to_events, shell_message_to_events, stdin_message_to_events};
+    use crate::{
+        jupyter::{Header, WireMessage},
+        kernel::{KernelEvent, KernelStatus},
+    };
+
+    fn wire_message(msg_type: &str, content: Value) -> WireMessage {
+        WireMessage {
+            ids: vec![Bytes::from_static(b"id")],
+            header: Header {
+                msg_id: "msg-1".to_string(),
+                username: "user".to_string(),
+                session: "session".to_string(),
+                date: "2024-01-01T00:00:00Z".to_string(),
+                msg_type: msg_type.to_string(),
+                version: "5.3".to_string(),
+            },
+            parent_header: Value::Null,
+            metadata: json!({}),
+            content,
+            buffers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn maps_status_messages_to_kernel_status() {
+        let events = iopub_message_to_events(wire_message(
+            "status",
+            json!({ "execution_state": "busy" }),
+        ));
+        assert!(matches!(events.as_slice(), [KernelEvent::Status(KernelStatus::Busy)]));
+
+        let events = iopub_message_to_events(wire_message(
+            "status",
+            json!({ "execution_state": "idle" }),
+        ));
+        assert!(matches!(events.as_slice(), [KernelEvent::Status(KernelStatus::Idle)]));
+    }
+
+    #[test]
+    fn maps_markdown_display_payloads_to_execute_results() {
+        let events = iopub_message_to_events(wire_message(
+            "display_data",
+            json!({
+                "data": {"text/markdown": "**hi**"},
+                "execution_count": 7
+            }),
+        ));
+
+        match events.as_slice() {
+            [KernelEvent::ExecuteResult {
+                execution_count,
+                text,
+            }] => {
+                assert_eq!(*execution_count, Some(7));
+                assert_eq!(text, "**hi**");
+            }
+            _ => panic!("unexpected events: {events:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_stdin_requests_to_input_events() {
+        let events = stdin_message_to_events(wire_message(
+            "input_request",
+            json!({"prompt": "Name: ", "password": true}),
+        ));
+
+        match events.as_slice() {
+            [KernelEvent::InputRequest { prompt, password }] => {
+                assert_eq!(prompt, "Name: ");
+                assert!(*password);
+            }
+            _ => panic!("unexpected events: {events:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_shutdown_reply_to_disconnected_status() {
+        let events = shell_message_to_events(wire_message("shutdown_reply", json!({})));
+        assert!(matches!(
+            events.as_slice(),
+            [KernelEvent::Status(KernelStatus::Disconnected)]
+        ));
+    }
+}

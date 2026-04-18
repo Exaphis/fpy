@@ -96,19 +96,50 @@ pub(super) fn editor_status_height() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{status_throbber, transient_status_label};
+    use super::{
+        pane_rect_at, status_line_for, status_throbber, transient_status_label,
+        viewport_height_for_editor,
+    };
     use crate::kernel::KernelStatus;
 
     #[test]
-    fn renders_busy_spinner_status() {
-        assert!(status_throbber(KernelStatus::Busy).is_some());
+    fn clamps_pane_top_and_height_to_screen() {
+        let pane = pane_rect_at(80, 10, 9, 4);
+        assert_eq!(pane.x, 0);
+        assert_eq!(pane.y, 6);
+        assert_eq!(pane.width, 80);
+        assert_eq!(pane.height, 4);
     }
 
     #[test]
-    fn renders_busy_status_label() {
+    fn grows_viewport_when_palette_is_open() {
+        assert_eq!(viewport_height_for_editor(2, true), 6);
+        assert_eq!(viewport_height_for_editor(2, false), 2);
+    }
+
+    #[test]
+    fn renders_disconnected_status_line() {
+        let line = status_line_for(KernelStatus::Disconnected).expect("status line");
+        assert_eq!(line.spans[0].content.as_ref(), "Kernel disconnected");
+    }
+
+    #[test]
+    fn renders_transient_status_labels_only_for_connecting_and_busy() {
+        assert_eq!(
+            transient_status_label(KernelStatus::Connecting),
+            Some("Connecting to kernel...")
+        );
         assert_eq!(
             transient_status_label(KernelStatus::Busy),
             Some("Kernel busy. Ctrl-C to interrupt")
         );
+        assert_eq!(transient_status_label(KernelStatus::Idle), None);
+    }
+
+    #[test]
+    fn renders_spinners_only_for_connecting_and_busy() {
+        assert!(status_throbber(KernelStatus::Connecting).is_some());
+        assert!(status_throbber(KernelStatus::Busy).is_some());
+        assert!(status_throbber(KernelStatus::Idle).is_none());
     }
 }

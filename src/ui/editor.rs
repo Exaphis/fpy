@@ -268,9 +268,19 @@ mod tests {
     }
 
     #[test]
+    fn builds_hidden_password_prompt_prefixes() {
+        let stdin = PendingStdin::new("Password: ".to_string(), true);
+        let (first, continuation) = prompt_prefixes(Some(&stdin)).unwrap();
+        assert_eq!(first, "stdin (hidden) Password: ");
+        assert_eq!(continuation, "                         ");
+    }
+
+    #[test]
     fn uses_line_numbers_for_normal_editor_gutter() {
         let lines = editor_gutter_lines(None, 2, 2);
         assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "1 ");
+        assert_eq!(lines[1].spans[0].content.as_ref(), "2 ");
     }
 
     #[test]
@@ -287,6 +297,7 @@ mod tests {
         let lines = editor_gutter_lines(Some(&stdin), 2, 2);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].spans[0].content.as_ref(), "(Pdb) ");
+        assert_eq!(lines[1].spans[0].content.as_ref(), "      ");
     }
 
     #[test]
@@ -317,6 +328,8 @@ mod tests {
     fn builds_prompt_gutter_lines() {
         let lines = prompt_gutter_lines("In [1]: ", "   ...: ", 2);
         assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "In [1]: ");
+        assert_eq!(lines[1].spans[0].content.as_ref(), "   ...: ");
     }
 
     #[test]

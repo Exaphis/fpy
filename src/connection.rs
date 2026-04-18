@@ -75,9 +75,8 @@ impl ConnectionFile {
 mod tests {
     use super::{Channel, ConnectionFile};
 
-    #[test]
-    fn builds_channel_endpoints() {
-        let connection = ConnectionFile {
+    fn sample_connection() -> ConnectionFile {
+        ConnectionFile {
             ip: "127.0.0.1".into(),
             transport: "tcp".into(),
             shell_port: 1,
@@ -88,9 +87,26 @@ mod tests {
             key: "secret".into(),
             signature_scheme: "hmac-sha256".into(),
             kernel_name: String::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn builds_channel_endpoints_for_each_socket() {
+        let connection = sample_connection();
 
         assert_eq!(connection.endpoint(Channel::Shell), "tcp://127.0.0.1:1");
+        assert_eq!(connection.endpoint(Channel::Iopub), "tcp://127.0.0.1:2");
+        assert_eq!(connection.endpoint(Channel::Stdin), "tcp://127.0.0.1:3");
+        assert_eq!(connection.endpoint(Channel::Control), "tcp://127.0.0.1:4");
         assert_eq!(connection.endpoint(Channel::Heartbeat), "tcp://127.0.0.1:5");
+    }
+
+    #[test]
+    fn summarizes_transport_and_ports() {
+        let summary = sample_connection().summary();
+        assert_eq!(
+            summary,
+            "transport=tcp ip=127.0.0.1 shell=1 iopub=2 stdin=3 control=4 hb=5"
+        );
     }
 }
