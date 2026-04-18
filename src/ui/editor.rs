@@ -60,7 +60,9 @@ pub(super) fn editor_gutter_width(
     awaiting_input: &Option<(String, bool)>,
     visible_lines: usize,
 ) -> u16 {
-    if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
+    if awaiting_input.is_some() {
+        0
+    } else if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
         prompt_gutter_width(&prompt_prefix, &continuation_prefix)
     } else {
         line_number_gutter_width(visible_lines)
@@ -72,7 +74,9 @@ pub(super) fn editor_gutter_lines(
     height: usize,
     visible_lines: usize,
 ) -> Vec<Line<'static>> {
-    if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
+    if awaiting_input.is_some() {
+        Vec::new()
+    } else if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
         prompt_gutter_lines(&prompt_prefix, &continuation_prefix, height)
     } else {
         line_number_gutter_lines(height, visible_lines)
@@ -138,7 +142,7 @@ pub(super) fn status_label<'a>(
     prompt_label: &'a str,
 ) -> Option<&'a str> {
     if awaiting_input.is_some() {
-        Some("stdin")
+        None
     } else {
         Some(prompt_label)
     }
@@ -244,11 +248,14 @@ mod tests {
     }
 
     #[test]
-    fn uses_stdin_label_in_status_bar() {
-        assert_eq!(
-            status_label(&Some(("input".to_string(), false)), "In [3]"),
-            Some("stdin")
-        );
+    fn uses_no_gutter_for_stdin_prompt() {
+        assert_eq!(super::editor_gutter_width(&Some(("stdin> ".to_string(), false)), 2), 0);
+        assert!(editor_gutter_lines(&Some(("stdin> ".to_string(), false)), 2, 2).is_empty());
+    }
+
+    #[test]
+    fn hides_stdin_label_in_status_bar() {
+        assert_eq!(status_label(&Some(("input".to_string(), false)), "In [3]"), None);
     }
 
     #[test]

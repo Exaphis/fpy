@@ -71,6 +71,66 @@ fn bottom_of_screen_result_still_visible() {
 }
 
 #[test]
+fn runtime_line_appears_after_output() {
+    let Some(output) = run_repro(
+        "runtime-line",
+        "none",
+        &[("PRE_INPUT", "1+1"), ("INPUTS", "1+1"), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "Out[1]: 2");
+    assert_bracketed_runtime_after(&output.after, "Out[1]: 2");
+}
+
+#[test]
+fn stdin_reply_is_sent_on_enter() {
+    let Some(output) = run_repro(
+        "stdin-reply",
+        "stdin-reply",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "bob");
+    assert_not_contains(&output.after, "stdin>");
+}
+
+#[test]
+fn stdin_prompt_is_flush_left() {
+    let Some(output) = run_repro(
+        "stdin-prompt",
+        "stdin-prompt",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_line_contains_all(&output.after, &["INS", "Ctrl-P palette"]);
+    assert_not_contains(&output.after, "stdin");
+    assert_no_line_starts_with(&output.after, "1 ");
+}
+
+#[test]
+fn stdin_shift_enter_keeps_prompt_clean() {
+    let Some(output) = run_repro(
+        "stdin-shift-enter",
+        "stdin-shift-enter",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: input()");
+    assert_line_contains_all(&output.after, &["INS", "Ctrl-P palette"]);
+    assert_not_contains(&output.after, "stdin");
+    assert_not_contains(&output.after, "■");
+    assert_not_contains(&output.after, "█");
+}
+
+#[test]
 fn multiline_paste_preserves_all_lines() {
     let Some(output) = run_repro(
         "multiline-paste",
@@ -301,6 +361,13 @@ fn assert_contains(haystack: &str, needle: &str) {
     );
 }
 
+fn assert_not_contains(haystack: &str, needle: &str) {
+    assert!(
+        !haystack.contains(needle),
+        "did not expect to find {needle:?} in output:\n{haystack}"
+    );
+}
+
 fn assert_line_count(haystack: &str, needle: &str, expected: usize) {
     let count = haystack.lines().filter(|line| line.contains(needle)).count();
     assert_eq!(
@@ -339,6 +406,30 @@ fn assert_blank_line_after_contains(haystack: &str, needle: &str) {
         index + 1 < lines.len() && lines[index + 1].trim().is_empty(),
         "expected a blank line immediately after a line containing {:?}:\n{}",
         needle,
+        haystack
+    );
+}
+
+fn assert_bracketed_runtime_after(haystack: &str, needle: &str) {
+    let lines = haystack.lines().collect::<Vec<_>>();
+    let index = lines
+        .iter()
+        .position(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("expected to find line containing {:?} in output:\n{}", needle, haystack));
+    let runtime_line = lines
+        .iter()
+        .skip(index + 1)
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_else(|| panic!("expected a runtime line after {:?}:\n{}", needle, haystack));
+    assert!(
+        runtime_line.starts_with('[')
+            && runtime_line.ends_with(']')
+            && ["µs", "ms", "s", "m", "h", "d"]
+                .iter()
+                .any(|unit| runtime_line.contains(unit)),
+        "expected a bracketed runtime line after {:?}, got {:?}\n{}",
+        needle,
+        runtime_line,
         haystack
     );
 }

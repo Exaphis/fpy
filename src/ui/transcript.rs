@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Duration};
 
 use edtui::syntect::{
     easy::HighlightLines,
@@ -53,6 +53,54 @@ pub(super) fn highlighted_execute_input(execution_count: Option<u32>, code: &str
     rendered
 }
 
+pub(super) fn runtime_line(duration: Duration) -> String {
+    format!("{PROMPT_ANSI}[{}]{ANSI_RESET}", format_runtime(duration))
+}
+
+fn format_runtime(duration: Duration) -> String {
+    let elapsed = duration.as_secs_f64();
+
+    if elapsed < 0.001 {
+        let micros = elapsed * 1e6;
+        let decimals = if micros >= 100.0 {
+            0
+        } else if micros >= 10.0 {
+            1
+        } else {
+            2
+        };
+        format!("{micros:.decimals$}µs")
+    } else if elapsed < 1.0 {
+        let millis = elapsed * 1e3;
+        let decimals = if millis >= 100.0 {
+            0
+        } else if millis >= 10.0 {
+            1
+        } else {
+            2
+        };
+        format!("{millis:.decimals$}ms")
+    } else if elapsed < 60.0 {
+        let decimals = if elapsed >= 10.0 { 1 } else { 2 };
+        format!("{elapsed:.decimals$}s")
+    } else {
+        let total_seconds = duration.as_secs();
+        if total_seconds < 3600 {
+            let minutes = total_seconds / 60;
+            let seconds = total_seconds % 60;
+            format!("{minutes}m{seconds:02}s")
+        } else if total_seconds < 86_400 {
+            let hours = total_seconds / 3600;
+            let minutes = (total_seconds % 3600) / 60;
+            format!("{hours}h{minutes:02}m")
+        } else {
+            let days = total_seconds / 86_400;
+            let hours = (total_seconds % 86_400) / 3600;
+            format!("{days}d{hours:02}h")
+        }
+    }
+}
+
 pub(super) fn display_width(text: &str) -> usize {
     strip_ansi(text).chars().count()
 }
@@ -98,7 +146,9 @@ pub(super) fn rendered_line_count(text: &str, width: u16) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{highlighted_execute_input, rendered_line_count, strip_ansi};
+    use std::time::Duration;
+
+    use super::{format_runtime, highlighted_execute_input, rendered_line_count, runtime_line, strip_ansi};
 
     #[test]
     fn strips_basic_ansi_sequences() {
@@ -123,5 +173,35 @@ mod tests {
     fn highlights_multiline_execute_input_with_ipython_continuation_prompt() {
         let rendered = strip_ansi(&highlighted_execute_input(Some(2), "x = 1\ny = 2"));
         assert!(rendered.contains("In [2]: x = 1\n   ...: y = 2"));
+    }
+
+    #[test]
+    fn formats_sub_millisecond_runtime_in_microseconds() {
+        assert_eq!(format_runtime(Duration::from_nanos(456_000)), "456µs");
+        assert_eq!(format_runtime(Duration::from_nanos(12_340)), "12.3µs");
+        assert_eq!(format_runtime(Duration::from_nanos(1_230)), "1.23µs");
+    }
+
+    #[test]
+    fn formats_sub_second_runtime_in_milliseconds() {
+        assert_eq!(format_runtime(Duration::from_millis(456)), "456ms");
+        assert_eq!(format_runtime(Duration::from_micros(12_340)), "12.3ms");
+        assert_eq!(format_runtime(Duration::from_micros(1_230)), "1.23ms");
+    }
+
+    #[test]
+    fn formats_seconds_minutes_hours_and_days_like_zsh_prompt() {
+        assert_eq!(format_runtime(Duration::from_millis(1500)), "1.50s");
+        assert_eq!(format_runtime(Duration::from_secs(12)), "12.0s");
+        assert_eq!(format_runtime(Duration::from_secs(125)), "2m05s");
+        assert_eq!(format_runtime(Duration::from_secs(3720)), "1h02m");
+        assert_eq!(format_runtime(Duration::from_secs(176_400)), "2d01h");
+    }
+
+    #[test]
+    fn renders_runtime_line_with_ansi() {
+        let rendered = runtime_line(Duration::from_millis(42));
+        assert!(rendered.contains("[42.0ms]"));
+        assert!(rendered.contains("\u{1b}["));
     }
 }

@@ -27,7 +27,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear as ClearWidget, Paragraph},
 };
-use std::io::{Write, stdout};
+use std::{
+    io::{Write, stdout},
+    time::Duration,
+};
 use throbber_widgets_tui::ThrobberState;
 
 use self::{
@@ -41,7 +44,7 @@ use self::{
         max_pane_top, pane_rect_at, status_line_for, status_throbber, transient_status_label,
         viewport_height_for_editor,
     },
-    transcript::highlighted_execute_input,
+    transcript::{highlighted_execute_input, runtime_line},
 };
 use crate::custom_terminal::DefaultTerminal;
 use crate::insert_history::insert_history_text;
@@ -203,6 +206,10 @@ impl AppUi {
 
     pub fn insert_execute_input(&mut self, execution_count: Option<u32>, code: &str) -> Result<()> {
         self.insert_transcript(highlighted_execute_input(execution_count, code))
+    }
+
+    pub fn insert_runtime(&mut self, duration: Duration) -> Result<()> {
+        self.insert_transcript(runtime_line(duration))
     }
 
     pub fn shutdown(&mut self) -> Result<()> {

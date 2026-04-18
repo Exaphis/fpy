@@ -1,3 +1,5 @@
+use std::time::{Duration as ElapsedDuration, Instant};
+
 use anyhow::Result;
 use tokio::{
     sync::oneshot,
@@ -59,6 +61,7 @@ pub async fn run(cli: Cli) -> Result<()> {
 struct ActiveSession {
     kernel: KernelSession,
     kernel_events: tokio::sync::mpsc::UnboundedReceiver<KernelEvent>,
+    execution_timer: ExecutionTimer,
 }
 
 type BootstrapReceiver = oneshot::Receiver<Result<BootstrappedSession>>;
@@ -72,6 +75,25 @@ enum BootstrapOutcome {
     Continue,
     Exit,
     Activated(Box<ActiveSession>),
+}
+
+#[derive(Default)]
+struct ExecutionTimer {
+    started_at: Option<Instant>,
+}
+
+impl ExecutionTimer {
+    fn start(&mut self) {
+        self.started_at = Some(Instant::now());
+    }
+
+    fn finish(&mut self) -> Option<ElapsedDuration> {
+        self.started_at.take().map(|started_at| started_at.elapsed())
+    }
+
+    fn clear(&mut self) {
+        self.started_at = None;
+    }
 }
 
 fn start_bootstrap(cli: Cli) -> Result<(String, JoinHandle<()>, BootstrapReceiver)> {
@@ -110,26 +132,26 @@ async fn run_active_iteration(
     if ui.needs_animation() {
         tokio::select! {
             event = session.kernel_events.recv() => {
-                handle_kernel_event_stream(ui, event)
+                handle_kernel_event_stream(ui, &mut session.execution_timer, event)
             }
             _ = liveness_check.tick() => {
-                handle_local_kernel_liveness(ui, &mut session.kernel)
+                handle_local_kernel_liveness(ui, &mut session.kernel, &mut session.execution_timer)
             }
             _ = ui_tick.tick() => Ok(false),
             input = ui.next_action() => {
-                handle_ready_input(ui, &mut session.kernel, input).await
+                handle_ready_input(ui, &mut session.kernel, &mut session.execution_timer, input).await
             }
         }
     } else {
         tokio::select! {
             event = session.kernel_events.recv() => {
-                handle_kernel_event_stream(ui, event)
+                handle_kernel_event_stream(ui, &mut session.execution_timer, event)
             }
             _ = liveness_check.tick() => {
-                handle_local_kernel_liveness(ui, &mut session.kernel)
+                handle_local_kernel_liveness(ui, &mut session.kernel, &mut session.execution_timer)
             }
             input = ui.next_action() => {
-                handle_ready_input(ui, &mut session.kernel, input).await
+                handle_ready_input(ui, &mut session.kernel, &mut session.execution_timer, input).await
             }
         }
     }
@@ -174,18 +196,28 @@ fn activate_bootstrap_result(
     Ok(BootstrapOutcome::Activated(Box::new(ActiveSession {
         kernel,
         kernel_events,
+        execution_timer: ExecutionTimer::default(),
     })))
 }
 
-fn handle_kernel_event_stream(ui: &mut AppUi, event: Option<KernelEvent>) -> Result<bool> {
+fn handle_kernel_event_stream(
+    ui: &mut AppUi,
+    execution_timer: &mut ExecutionTimer,
+    event: Option<KernelEvent>,
+) -> Result<bool> {
     match event {
-        Some(event) => handle_kernel_event(ui, event),
+        Some(event) => handle_kernel_event(ui, execution_timer, event),
         None => Ok(true),
     }
 }
 
-fn handle_local_kernel_liveness(ui: &mut AppUi, kernel: &mut KernelSession) -> Result<bool> {
+fn handle_local_kernel_liveness(
+    ui: &mut AppUi,
+    kernel: &mut KernelSession,
+    execution_timer: &mut ExecutionTimer,
+) -> Result<bool> {
     if let Some(message) = kernel.poll_local_exit()? {
+        execution_timer.clear();
         ui.set_status(KernelStatus::Disconnected);
         ui.insert_transcript(message)?;
         Ok(true)
@@ -197,10 +229,11 @@ fn handle_local_kernel_liveness(ui: &mut AppUi, kernel: &mut KernelSession) -> R
 async fn handle_ready_input(
     ui: &mut AppUi,
     kernel: &mut KernelSession,
+    execution_timer: &mut ExecutionTimer,
     input: Result<Option<UiAction>>,
 ) -> Result<bool> {
     if let Some(action) = input? {
-        handle_ready_ui_action(ui, kernel, action).await
+        handle_ready_ui_action(ui, kernel, execution_timer, action).await
     } else {
         Ok(false)
     }
@@ -219,21 +252,35 @@ fn handle_pending_input(
     }
 }
 
-fn handle_kernel_event(ui: &mut AppUi, event: KernelEvent) -> Result<bool> {
+fn handle_kernel_event(
+    ui: &mut AppUi,
+    execution_timer: &mut ExecutionTimer,
+    event: KernelEvent,
+) -> Result<bool> {
     match event {
         KernelEvent::Connected(summary) => {
             ui.set_connection_summary(summary);
         }
         KernelEvent::Status(status) => {
             ui.set_status(status);
-            if status == KernelStatus::Disconnected {
-                return Ok(true);
+            match status {
+                KernelStatus::Idle => {
+                    if let Some(duration) = execution_timer.finish() {
+                        ui.insert_runtime(duration)?;
+                    }
+                }
+                KernelStatus::Disconnected => {
+                    execution_timer.clear();
+                    return Ok(true);
+                }
+                _ => {}
             }
         }
         KernelEvent::ExecuteInput {
             execution_count,
             code,
         } => {
+            execution_timer.start();
             ui.set_last_execution_count(execution_count);
             ui.insert_execute_input(execution_count, &code)?;
         }
@@ -268,6 +315,7 @@ fn handle_kernel_event(ui: &mut AppUi, event: KernelEvent) -> Result<bool> {
             ui.insert_transcript(format!("warning: {text}"))?;
         }
         KernelEvent::Fatal(text) => {
+            execution_timer.clear();
             ui.set_status(KernelStatus::Disconnected);
             ui.insert_transcript(format!("fatal: {text}"))?;
             return Ok(true);
@@ -301,6 +349,7 @@ fn handle_pending_ui_action(ui: &mut AppUi, action: UiAction) -> Result<bool> {
 async fn handle_ready_ui_action(
     ui: &mut AppUi,
     kernel: &mut KernelSession,
+    execution_timer: &mut ExecutionTimer,
     action: UiAction,
 ) -> Result<bool> {
     match action {
@@ -310,7 +359,6 @@ async fn handle_ready_ui_action(
             Ok(false)
         }
         UiAction::ReplyInput(value) => {
-            ui.insert_transcript(format!("stdin> {value}"))?;
             kernel.send_input_reply(value)?;
             ui.set_status(KernelStatus::Busy);
             Ok(false)
@@ -328,6 +376,7 @@ async fn handle_ready_ui_action(
         }
         UiAction::Exit => Ok(true),
         UiAction::Restart => {
+            execution_timer.clear();
             match kernel.restart().await {
                 Ok(()) => {
                     ui.set_connection_summary(kernel.connection_summary());
@@ -342,5 +391,26 @@ async fn handle_ready_ui_action(
             ui.insert_transcript(ui.connection_summary().to_string())?;
             Ok(false)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExecutionTimer;
+
+    #[test]
+    fn execution_timer_finishes_only_once() {
+        let mut timer = ExecutionTimer::default();
+        timer.start();
+        assert!(timer.finish().is_some());
+        assert!(timer.finish().is_none());
+    }
+
+    #[test]
+    fn execution_timer_clear_discards_pending_runtime() {
+        let mut timer = ExecutionTimer::default();
+        timer.start();
+        timer.clear();
+        assert!(timer.finish().is_none());
     }
 }

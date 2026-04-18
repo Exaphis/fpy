@@ -125,6 +125,23 @@ case "$ACTION" in
     sleep 0.5
     tmux send-keys -t "$SESSION" -l "1+1"
     ;;
+  stdin-reply)
+    tmux send-keys -t "$SESSION" "name = input('Name: '); print(name)" Enter
+    sleep 1
+    tmux send-keys -t "$SESSION" -l "bob"
+    tmux send-keys -t "$SESSION" Enter
+    ;;
+  stdin-prompt)
+    tmux send-keys -t "$SESSION" "input()" Enter
+    sleep 1
+    ;;
+  stdin-shift-enter)
+    tmux send-keys -t "$SESSION" "input()" Enter
+    sleep 1
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    sleep 0.2
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    ;;
   vim-open-below)
     tmux send-keys -t "$SESSION" Escape
     sleep 0.2
