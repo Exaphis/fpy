@@ -35,9 +35,10 @@ use throbber_widgets_tui::ThrobberState;
 
 use self::{
     editor::{
-        build_editor_state, editor_gutter_lines, editor_gutter_width, editor_palette_hint,
-        editor_palette_hint_width, editor_status_prefix, editor_status_prefix_width,
-        editor_syntax_highlighter, editor_theme, indent_width, move_editor_to_row, status_label,
+        PendingStdin, build_editor_state, editor_gutter_lines, editor_gutter_width,
+        editor_palette_hint, editor_palette_hint_width, editor_status_prefix,
+        editor_status_prefix_width, editor_syntax_highlighter, editor_theme, indent_width,
+        move_editor_to_row, status_label,
     },
     render::{
         build_terminal, editor_status_height, editor_visible_line_count, initial_pane_top,
@@ -86,19 +87,180 @@ pub enum UiAction {
     ShowConnectionInfo,
 }
 
-pub struct AppUi {
-    terminal: Option<DefaultTerminal>,
-    events: EventStream,
-    current_pane: Rect,
-    pane_top: u16,
+struct EditorController {
     editor: EditorState,
     editor_events: EditorEventHandler,
     pending_normal_count: String,
     history: Vec<String>,
     history_index: Option<usize>,
+    pending_stdin: Option<PendingStdin>,
+}
+
+impl EditorController {
+    fn new() -> Self {
+        Self {
+            editor: build_editor_state(""),
+            editor_events: EditorEventHandler::default(),
+            pending_normal_count: String::new(),
+            history: Vec::new(),
+            history_index: None,
+            pending_stdin: None,
+        }
+    }
+
+    fn begin_input_request(&mut self, prompt: String, password: bool) {
+        self.pending_stdin = Some(PendingStdin::new(prompt, password));
+        self.reset();
+    }
+
+    fn clear_input_request(&mut self) {
+        self.pending_stdin = None;
+    }
+
+    fn take_pending_stdin(&mut self) -> Option<PendingStdin> {
+        self.pending_stdin.take()
+    }
+
+    fn pending_stdin(&self) -> Option<&PendingStdin> {
+        self.pending_stdin.as_ref()
+    }
+
+    fn awaiting_input(&self) -> bool {
+        self.pending_stdin.is_some()
+    }
+
+    fn mode(&self) -> EditorMode {
+        self.editor.mode
+    }
+
+    fn cursor_screen_position(&self) -> Option<ratatui::layout::Position> {
+        self.editor.cursor_screen_position()
+    }
+
+    fn visible_line_count(&self) -> usize {
+        editor_visible_line_count(self.editor.lines.len())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.editor.lines.to_string().is_empty()
+    }
+
+    fn is_single_line(&self) -> bool {
+        self.editor.lines.len() <= 1
+    }
+
+    fn editor_mut(&mut self) -> &mut EditorState {
+        &mut self.editor
+    }
+
+    fn reset(&mut self) {
+        self.editor = build_editor_state("");
+        self.editor_events = EditorEventHandler::default();
+        self.pending_normal_count.clear();
+    }
+
+    fn set_text(&mut self, text: &str) {
+        self.editor = build_editor_state(text);
+        self.editor_events = EditorEventHandler::default();
+        self.pending_normal_count.clear();
+    }
+
+    fn take_text(&mut self) -> String {
+        let text = self.editor.lines.to_string();
+        self.reset();
+        text
+    }
+
+    fn history_up(&mut self) {
+        let next = match self.history_index {
+            Some(index) => index.saturating_sub(1),
+            None => self.history.len().saturating_sub(1),
+        };
+        self.history_index = Some(next);
+        let text = self.history[next].clone();
+        self.set_text(&text);
+    }
+
+    fn history_down(&mut self) {
+        match self.history_index {
+            Some(index) if index + 1 < self.history.len() => {
+                self.history_index = Some(index + 1);
+                let text = self.history[index + 1].clone();
+                self.set_text(&text);
+            }
+            Some(_) => {
+                self.history_index = None;
+                self.reset();
+            }
+            None => {}
+        }
+    }
+
+    fn push_history(&mut self, text: String) {
+        self.history.push(text);
+        self.history_index = None;
+    }
+
+    fn has_history(&self) -> bool {
+        !self.history.is_empty()
+    }
+
+    fn on_paste(&mut self, text: String) {
+        self.editor_events.on_paste_event(text, &mut self.editor);
+    }
+
+    fn on_key(&mut self, key: KeyEvent) {
+        self.editor_events.on_key_event(key, &mut self.editor);
+    }
+
+    fn insert_indent(&mut self) {
+        for _ in 0..indent_width() {
+            self.editor.execute(InsertChar(' '));
+        }
+    }
+
+    fn insert_line_break(&mut self) {
+        self.editor
+            .execute(SwitchMode(EditorMode::Insert).chain(LineBreak(1)));
+    }
+
+    fn handle_normal_mode_count_prefix(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char(digit)
+                if digit.is_ascii_digit()
+                    && (!self.pending_normal_count.is_empty() || digit != '0') =>
+            {
+                self.pending_normal_count.push(digit);
+                true
+            }
+            KeyCode::Char('G') if !self.pending_normal_count.is_empty() => {
+                let count = self.pending_normal_count.parse::<usize>().ok();
+                self.pending_normal_count.clear();
+                if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
+                    move_editor_to_row(&mut self.editor, target_row);
+                }
+                true
+            }
+            _ => {
+                self.pending_normal_count.clear();
+                false
+            }
+        }
+    }
+
+    fn clear_normal_mode_count(&mut self) {
+        self.pending_normal_count.clear();
+    }
+}
+
+pub struct AppUi {
+    terminal: Option<DefaultTerminal>,
+    events: EventStream,
+    current_pane: Rect,
+    pane_top: u16,
+    editor: EditorController,
     palette_open: bool,
     palette_index: usize,
-    awaiting_input: Option<(String, bool)>,
     last_execution_count: Option<u32>,
     status: KernelStatus,
     connection_summary: String,
@@ -135,14 +297,9 @@ impl AppUi {
             events: EventStream::new(),
             current_pane: pane,
             pane_top,
-            editor: build_editor_state(""),
-            editor_events: EditorEventHandler::default(),
-            pending_normal_count: String::new(),
-            history: Vec::new(),
-            history_index: None,
+            editor: EditorController::new(),
             palette_open: false,
             palette_index: 0,
-            awaiting_input: None,
             last_execution_count: None,
             status: KernelStatus::Connecting,
             connection_summary,
@@ -182,13 +339,12 @@ impl AppUi {
     }
 
     pub fn begin_input_request(&mut self, prompt: String, password: bool) {
-        self.awaiting_input = Some((prompt, password));
-        self.reset_editor();
+        self.editor.begin_input_request(prompt, password);
         self.status = KernelStatus::AwaitingInput;
     }
 
     pub fn clear_input_request(&mut self) {
-        self.awaiting_input = None;
+        self.editor.clear_input_request();
     }
 
     pub fn mark_session_ready(&mut self) {
@@ -268,12 +424,12 @@ impl AppUi {
 
     pub fn redraw(&mut self) -> Result<()> {
         self.sync_viewport()?;
-        let awaiting_input = self.awaiting_input.clone();
+        let awaiting_input = self.editor.pending_stdin().cloned();
         let palette_open = self.palette_open;
         let palette_index = self.palette_index;
         let input_active = self.input_active();
         let prompt_label = self.prompt_label();
-        let visible_lines = self.editor_visible_line_count();
+        let visible_lines = self.editor.visible_line_count();
         let status = self.status;
         let transient_status = if self.session_ready && status == KernelStatus::Connecting {
             None
@@ -353,19 +509,19 @@ impl AppUi {
                 } else {
                     frame.render_widget(ClearWidget, content_area);
                     frame.render_widget(ClearWidget, status_area);
-                    let gutter_width =
-                        editor_gutter_width(&awaiting_input, visible_lines).min(content_area.width);
+                    let gutter_width = editor_gutter_width(awaiting_input.as_ref(), visible_lines)
+                        .min(content_area.width);
                     let [gutter_area, content_area] =
                         Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(1)])
                             .areas(content_area);
                     let gutter_lines = editor_gutter_lines(
-                        &awaiting_input,
+                        awaiting_input.as_ref(),
                         gutter_area.height as usize,
                         visible_lines,
                     );
                     frame.render_widget(Paragraph::new(gutter_lines), gutter_area);
 
-                    let editor_view = EditorView::new(editor)
+                    let editor_view = EditorView::new(editor.editor_mut())
                         .theme(editor_theme())
                         .tab_width(indent_width())
                         .wrap(false)
@@ -374,8 +530,8 @@ impl AppUi {
                     frame.render_widget(editor_view, content_area);
                 }
                 if let Some(throbber) = status_throbber(status) {
-                    let status_detail = status_label(&awaiting_input, &prompt_label);
-                    let prefix_width = editor_status_prefix_width(editor.mode, status_detail);
+                    let status_detail = status_label(awaiting_input.as_ref(), &prompt_label);
+                    let prefix_width = editor_status_prefix_width(editor.mode(), status_detail);
                     let transient_width = transient_status
                         .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
                         .unwrap_or(0);
@@ -391,7 +547,7 @@ impl AppUi {
                         ])
                         .areas(status_area);
                     frame.render_widget(
-                        editor_status_prefix(editor.mode, status_detail),
+                        editor_status_prefix(editor.mode(), status_detail),
                         status_text_area,
                     );
                     frame.render_widget(Paragraph::new(" "), spinner_gap_area);
@@ -408,8 +564,8 @@ impl AppUi {
                     frame.render_widget(Paragraph::new(""), filler_area);
                     frame.render_widget(editor_palette_hint(), palette_hint_area);
                 } else {
-                    let status_detail = status_label(&awaiting_input, &prompt_label);
-                    let prefix_width = editor_status_prefix_width(editor.mode, status_detail);
+                    let status_detail = status_label(awaiting_input.as_ref(), &prompt_label);
+                    let prefix_width = editor_status_prefix_width(editor.mode(), status_detail);
                     let palette_hint_width = editor_palette_hint_width();
                     let [status_text_area, filler_area, palette_hint_area] = Layout::horizontal([
                         Constraint::Length(prefix_width),
@@ -418,7 +574,7 @@ impl AppUi {
                     ])
                     .areas(status_area);
                     frame.render_widget(
-                        editor_status_prefix(editor.mode, status_detail),
+                        editor_status_prefix(editor.mode(), status_detail),
                         status_text_area,
                     );
                     frame.render_widget(Paragraph::new(""), filler_area);
@@ -459,7 +615,7 @@ impl AppUi {
                 Event::Paste(text) => {
                     if self.editor_enabled() {
                         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-                        self.editor_events.on_paste_event(text, &mut self.editor);
+                        self.editor.on_paste(text);
                     }
                     return Ok(None);
                 }
@@ -479,13 +635,13 @@ impl AppUi {
         }
 
         if self.editor_enabled()
-            && matches!(self.editor.mode, EditorMode::Normal | EditorMode::Visual)
+            && matches!(self.editor.mode(), EditorMode::Normal | EditorMode::Visual)
         {
-            if let Some(action) = self.handle_normal_mode_count_prefix(key) {
-                return action;
+            if self.editor.handle_normal_mode_count_prefix(key) {
+                return None;
             }
         } else {
-            self.pending_normal_count.clear();
+            self.editor.clear_normal_mode_count();
         }
 
         match key {
@@ -502,7 +658,7 @@ impl AppUi {
                 modifiers,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => {
-                if self.awaiting_input.is_some() {
+                if self.editor.awaiting_input() {
                     Some(UiAction::Interrupt)
                 } else if self.submit_ready() {
                     let _ = self.clear_editor_view();
@@ -517,8 +673,8 @@ impl AppUi {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL)
                 && self.editor_enabled()
-                && self.awaiting_input.is_none()
-                && self.editor_is_empty() =>
+                && !self.editor.awaiting_input()
+                && self.editor.is_empty() =>
             {
                 Some(UiAction::Exit)
             }
@@ -529,10 +685,8 @@ impl AppUi {
             } if modifiers.contains(KeyModifiers::CONTROL) => Some(UiAction::ClearScreen),
             KeyEvent {
                 code: KeyCode::Tab, ..
-            } if self.editor_enabled() && self.editor.mode == EditorMode::Insert => {
-                for _ in 0..indent_width() {
-                    self.editor.execute(InsertChar(' '));
-                }
+            } if self.editor_enabled() && self.editor.mode() == EditorMode::Insert => {
+                self.editor.insert_indent();
                 None
             }
             KeyEvent {
@@ -540,53 +694,45 @@ impl AppUi {
                 modifiers,
                 ..
             } if self.editor_enabled() && modifiers.contains(KeyModifiers::SHIFT) => {
-                self.editor
-                    .execute(SwitchMode(EditorMode::Insert).chain(LineBreak(1)));
+                self.editor.insert_line_break();
                 None
             }
             KeyEvent {
                 code: KeyCode::Enter,
                 ..
             } if self.submit_ready() => {
-                let text = self.take_editor_text();
-                if self.awaiting_input.is_some() {
-                    let (prompt, password) = self.awaiting_input.take().unwrap_or_default();
-                    let prompt = if prompt.is_empty() { None } else { Some(prompt) };
+                let text = self.editor.take_text();
+                if let Some(stdin) = self.editor.take_pending_stdin() {
                     Some(UiAction::ReplyInput {
                         value: text,
-                        prompt,
-                        password,
+                        prompt: stdin.visible_prompt().map(str::to_owned),
+                        password: stdin.password(),
                     })
                 } else {
                     if text.trim().is_empty() {
                         return None;
                     }
-                    self.history.push(text.clone());
-                    self.history_index = None;
+                    self.editor.push_history(text.clone());
                     Some(UiAction::Submit(text))
                 }
             }
             KeyEvent {
                 code: KeyCode::Up, ..
-            } if self.editor_enabled()
-                && self.editor_is_single_line()
-                && !self.history.is_empty() =>
+            } if self.editor_enabled() && self.editor.is_single_line() && self.editor.has_history() =>
             {
-                self.history_up();
+                self.editor.history_up();
                 None
             }
             KeyEvent {
                 code: KeyCode::Down,
                 ..
-            } if self.editor_enabled()
-                && self.editor_is_single_line()
-                && !self.history.is_empty() =>
+            } if self.editor_enabled() && self.editor.is_single_line() && self.editor.has_history() =>
             {
-                self.history_down();
+                self.editor.history_down();
                 None
             }
             key if self.editor_enabled() => {
-                self.editor_events.on_key_event(key, &mut self.editor);
+                self.editor.on_key(key);
                 None
             }
             _ => None,
@@ -594,7 +740,7 @@ impl AppUi {
     }
 
     fn handle_palette_key(&mut self, key: KeyEvent) -> Option<UiAction> {
-        self.pending_normal_count.clear();
+        self.editor.clear_normal_mode_count();
         match key.code {
             KeyCode::Esc => {
                 self.palette_open = false;
@@ -622,31 +768,6 @@ impl AppUi {
                 }
             }
             _ => None,
-        }
-    }
-
-    fn history_up(&mut self) {
-        let next = match self.history_index {
-            Some(index) => index.saturating_sub(1),
-            None => self.history.len().saturating_sub(1),
-        };
-        self.history_index = Some(next);
-        let text = self.history[next].clone();
-        self.set_editor_text(&text);
-    }
-
-    fn history_down(&mut self) {
-        match self.history_index {
-            Some(index) if index + 1 < self.history.len() => {
-                self.history_index = Some(index + 1);
-                let text = self.history[index + 1].clone();
-                self.set_editor_text(&text);
-            }
-            Some(_) => {
-                self.history_index = None;
-                let _ = self.clear_editor_view();
-            }
-            None => {}
         }
     }
 
@@ -682,7 +803,7 @@ impl AppUi {
 
     fn pane_height(&self) -> u16 {
         let input_rows = if self.editor_enabled() {
-            self.editor_visible_line_count() as u16 + editor_status_height()
+            self.editor.visible_line_count() as u16 + editor_status_height()
         } else {
             1 + editor_status_height()
         };
@@ -714,39 +835,9 @@ impl AppUi {
             || (self.status == KernelStatus::Connecting && !self.session_ready)
     }
 
-    fn editor_visible_line_count(&self) -> usize {
-        editor_visible_line_count(self.editor.lines.len())
-    }
-
-    fn editor_is_empty(&self) -> bool {
-        self.editor.lines.to_string().is_empty()
-    }
-
-    fn editor_is_single_line(&self) -> bool {
-        self.editor.lines.len() <= 1
-    }
-
-    fn reset_editor(&mut self) {
-        self.editor = build_editor_state("");
-        self.editor_events = EditorEventHandler::default();
-        self.pending_normal_count.clear();
-    }
-
-    fn set_editor_text(&mut self, text: &str) {
-        self.editor = build_editor_state(text);
-        self.editor_events = EditorEventHandler::default();
-        self.pending_normal_count.clear();
-    }
-
-    fn take_editor_text(&mut self) -> String {
-        let text = self.editor.lines.to_string();
-        self.reset_editor();
-        text
-    }
-
     fn clear_editor_view(&mut self) -> Result<()> {
         self.clear_current_pane_rows()?;
-        self.reset_editor();
+        self.editor.reset();
         self.terminal_mut()?.invalidate_viewport();
         Ok(())
     }
@@ -806,29 +897,6 @@ impl AppUi {
         Ok(())
     }
 
-    fn handle_normal_mode_count_prefix(&mut self, key: KeyEvent) -> Option<Option<UiAction>> {
-        match key.code {
-            KeyCode::Char(digit)
-                if digit.is_ascii_digit()
-                    && (!self.pending_normal_count.is_empty() || digit != '0') =>
-            {
-                self.pending_normal_count.push(digit);
-                Some(None)
-            }
-            KeyCode::Char('G') if !self.pending_normal_count.is_empty() => {
-                let count = self.pending_normal_count.parse::<usize>().ok();
-                self.pending_normal_count.clear();
-                if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
-                    move_editor_to_row(&mut self.editor, target_row);
-                }
-                Some(None)
-            }
-            _ => {
-                self.pending_normal_count.clear();
-                None
-            }
-        }
-    }
 }
 
 impl Drop for AppUi {

@@ -11,6 +11,30 @@ use ratatui::{
 const INDENT_WIDTH: usize = 4;
 const EDITOR_THEME_NAME: &str = "base16-ocean-dark";
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct PendingStdin {
+    prompt: String,
+    password: bool,
+}
+
+impl PendingStdin {
+    pub(super) fn new(prompt: String, password: bool) -> Self {
+        Self { prompt, password }
+    }
+
+    pub(super) fn prompt(&self) -> &str {
+        &self.prompt
+    }
+
+    pub(super) fn password(&self) -> bool {
+        self.password
+    }
+
+    pub(super) fn visible_prompt(&self) -> Option<&str> {
+        (!self.prompt.is_empty()).then_some(self.prompt())
+    }
+}
+
 pub(super) fn build_editor_state(text: &str) -> EditorState {
     let mut lines = Lines::from(text);
     if lines.is_empty() {
@@ -40,16 +64,16 @@ pub(super) fn move_editor_to_row(editor: &mut EditorState, target_row: usize) {
     }
 }
 
-pub(super) fn prompt_prefixes(awaiting_input: &Option<(String, bool)>) -> Option<(String, String)> {
+pub(super) fn prompt_prefixes(awaiting_input: Option<&PendingStdin>) -> Option<(String, String)> {
     match awaiting_input {
-        Some((prompt, false)) if prompt.is_empty() => None,
-        Some((prompt, true)) => {
-            let first = format!("stdin (hidden) {prompt}");
+        Some(stdin) if stdin.prompt().is_empty() && !stdin.password() => None,
+        Some(stdin) if stdin.password() => {
+            let first = format!("stdin (hidden) {}", stdin.prompt());
             let continuation = " ".repeat(super::transcript::display_width(&first));
             Some((first, continuation))
         }
-        Some((prompt, false)) => {
-            let first = prompt.clone();
+        Some(stdin) => {
+            let first = stdin.prompt().to_string();
             let continuation = " ".repeat(super::transcript::display_width(&first));
             Some((first, continuation))
         }
@@ -58,7 +82,7 @@ pub(super) fn prompt_prefixes(awaiting_input: &Option<(String, bool)>) -> Option
 }
 
 pub(super) fn editor_gutter_width(
-    awaiting_input: &Option<(String, bool)>,
+    awaiting_input: Option<&PendingStdin>,
     visible_lines: usize,
 ) -> u16 {
     if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
@@ -71,7 +95,7 @@ pub(super) fn editor_gutter_width(
 }
 
 pub(super) fn editor_gutter_lines(
-    awaiting_input: &Option<(String, bool)>,
+    awaiting_input: Option<&PendingStdin>,
     height: usize,
     visible_lines: usize,
 ) -> Vec<Line<'static>> {
@@ -139,7 +163,7 @@ pub(super) fn editor_status_prefix_width(mode: EditorMode, detail: Option<&str>)
 }
 
 pub(super) fn status_label<'a>(
-    awaiting_input: &'a Option<(String, bool)>,
+    awaiting_input: Option<&'a PendingStdin>,
     prompt_label: &'a str,
 ) -> Option<&'a str> {
     if awaiting_input.is_some() {
@@ -216,8 +240,8 @@ mod tests {
     use edtui::{EditorMode, Index2};
 
     use super::{
-        build_editor_state, editor_gutter_lines, editor_syntax_highlighter, move_editor_to_row,
-        prompt_gutter_lines, prompt_prefixes, status_label,
+        PendingStdin, build_editor_state, editor_gutter_lines, editor_syntax_highlighter,
+        move_editor_to_row, prompt_gutter_lines, prompt_prefixes, status_label,
     };
 
     #[test]
@@ -237,45 +261,49 @@ mod tests {
 
     #[test]
     fn builds_ipython_prompt_prefixes() {
-        let (first, continuation) = prompt_prefixes(&Some(("stdin> ".to_string(), false))).unwrap();
+        let stdin = PendingStdin::new("stdin> ".to_string(), false);
+        let (first, continuation) = prompt_prefixes(Some(&stdin)).unwrap();
         assert_eq!(first, "stdin> ");
         assert_eq!(continuation, "       ");
     }
 
     #[test]
     fn uses_line_numbers_for_normal_editor_gutter() {
-        let lines = editor_gutter_lines(&None, 2, 2);
+        let lines = editor_gutter_lines(None, 2, 2);
         assert_eq!(lines.len(), 2);
     }
 
     #[test]
     fn uses_no_gutter_for_empty_stdin_prompt() {
-        assert_eq!(super::editor_gutter_width(&Some(("".to_string(), false)), 2), 0);
-        assert!(editor_gutter_lines(&Some(("".to_string(), false)), 2, 2).is_empty());
+        let stdin = PendingStdin::new("".to_string(), false);
+        assert_eq!(super::editor_gutter_width(Some(&stdin), 2), 0);
+        assert!(editor_gutter_lines(Some(&stdin), 2, 2).is_empty());
     }
 
     #[test]
     fn uses_prompt_gutter_for_nonempty_stdin_prompt() {
-        assert_eq!(super::editor_gutter_width(&Some(("(Pdb) ".to_string(), false)), 2), 6);
-        let lines = editor_gutter_lines(&Some(("(Pdb) ".to_string(), false)), 2, 2);
+        let stdin = PendingStdin::new("(Pdb) ".to_string(), false);
+        assert_eq!(super::editor_gutter_width(Some(&stdin), 2), 6);
+        let lines = editor_gutter_lines(Some(&stdin), 2, 2);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].spans[0].content.as_ref(), "(Pdb) ");
     }
 
     #[test]
     fn hides_stdin_label_in_status_bar() {
-        assert_eq!(status_label(&Some(("input".to_string(), false)), "In [3]"), None);
+        let stdin = PendingStdin::new("input".to_string(), false);
+        assert_eq!(status_label(Some(&stdin), "In [3]"), None);
     }
 
     #[test]
     fn uses_prompt_label_in_status_bar() {
-        assert_eq!(status_label(&None, "In [3]"), Some("In [3]"));
+        assert_eq!(status_label(None, "In [3]"), Some("In [3]"));
     }
 
     #[test]
     fn builds_stdin_prompt_prefixes() {
-        let (first, continuation) =
-            prompt_prefixes(&Some(("In [3]: ".to_string(), false))).unwrap();
+        let stdin = PendingStdin::new("In [3]: ".to_string(), false);
+        let (first, continuation) = prompt_prefixes(Some(&stdin)).unwrap();
         assert_eq!(first, "In [3]: ");
         assert_eq!(continuation, "        ");
     }
