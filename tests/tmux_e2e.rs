@@ -99,6 +99,21 @@ fn stdin_reply_is_sent_on_enter() {
 }
 
 #[test]
+fn stdin_empty_reply_is_sent_on_enter() {
+    let Some(output) = run_repro(
+        "stdin-empty-reply",
+        "stdin-empty-reply",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: repr(input())");
+    assert_contains(&output.after, "Out[1]: \"''\"");
+    assert_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+}
+
+#[test]
 fn stdin_prompt_is_flush_left() {
     let Some(output) = run_repro(
         "stdin-prompt",
@@ -128,6 +143,22 @@ fn stdin_shift_enter_keeps_prompt_clean() {
     assert_not_contains(&output.after, "stdin");
     assert_not_contains(&output.after, "■");
     assert_not_contains(&output.after, "█");
+}
+
+#[test]
+fn ctrl_d_does_not_exit_during_stdin_prompt() {
+    let Some(output) = run_repro(
+        "stdin-ctrl-d",
+        "stdin-ctrl-d",
+        &[("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: input()");
+    assert_contains(&output.after, "Out[1]: 'x'");
+    assert_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+    assert_not_contains(&output.after, "command not found");
 }
 
 #[test]

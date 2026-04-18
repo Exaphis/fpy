@@ -131,6 +131,11 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" -l "bob"
     tmux send-keys -t "$SESSION" Enter
     ;;
+  stdin-empty-reply)
+    tmux send-keys -t "$SESSION" "repr(input())" Enter
+    sleep 1
+    tmux send-keys -t "$SESSION" Enter
+    ;;
   stdin-prompt)
     tmux send-keys -t "$SESSION" "input()" Enter
     sleep 1
@@ -141,6 +146,14 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     sleep 0.2
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    ;;
+  stdin-ctrl-d)
+    tmux send-keys -t "$SESSION" "input()" Enter
+    sleep 1
+    tmux send-keys -t "$SESSION" C-d
+    sleep 0.2
+    tmux send-keys -t "$SESSION" -l "x"
+    tmux send-keys -t "$SESSION" Enter
     ;;
   vim-open-below)
     tmux send-keys -t "$SESSION" Escape

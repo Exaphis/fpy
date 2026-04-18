@@ -511,6 +511,7 @@ impl AppUi {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL)
                 && self.editor_enabled()
+                && self.awaiting_input.is_none()
                 && self.editor_is_empty() =>
             {
                 Some(UiAction::Exit)
@@ -542,16 +543,15 @@ impl AppUi {
                 ..
             } if self.submit_ready() => {
                 let text = self.take_editor_text();
-                if text.trim().is_empty() {
-                    return None;
-                }
-                self.history.push(text.clone());
-                self.history_index = None;
-
                 if self.awaiting_input.is_some() {
                     self.awaiting_input = None;
                     Some(UiAction::ReplyInput(text))
                 } else {
+                    if text.trim().is_empty() {
+                        return None;
+                    }
+                    self.history.push(text.clone());
+                    self.history_index = None;
                     Some(UiAction::Submit(text))
                 }
             }
