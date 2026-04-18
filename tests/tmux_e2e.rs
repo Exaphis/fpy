@@ -417,12 +417,19 @@ fn run_repro(name: &str, action: &str, extra_env: &[(&str, &str)]) -> Option<Rep
     let before_log = target_dir.join(format!("tmux-e2e-{name}-{unique}.before.log"));
     let after_log = target_dir.join(format!("tmux-e2e-{name}-{unique}.after.log"));
     let session = format!("fpy-e2e-{name}-{unique}");
+    let fpy_bin = option_env!("CARGO_BIN_EXE_fpy")
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| repo_root.join("target/debug/fpy"));
 
     let mut command = Command::new(repo_root.join("scripts/fpy-tmux-repro.sh"));
     command.current_dir(&repo_root).arg(action);
     command.env("SESSION", &session);
     command.env("BEFORE_LOG", &before_log);
     command.env("AFTER_LOG", &after_log);
+    if fpy_bin.exists() {
+        command.env("FPY_BIN", &fpy_bin);
+    }
     for (key, value) in extra_env {
         command.env(key, value);
     }

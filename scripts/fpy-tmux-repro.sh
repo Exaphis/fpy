@@ -14,17 +14,26 @@ if [ -z "${PYTHON_BIN+x}" ]; then
     PYTHON_BIN="python3"
   fi
 fi
-FPY_CMD="${FPY_CMD:-cargo run -- run --python $PYTHON_BIN}"
+if [ -z "${FPY_BIN+x}" ] && [ -x "$ROOT/target/debug/fpy" ]; then
+  FPY_BIN="$ROOT/target/debug/fpy"
+fi
+if [ -z "${FPY_CMD+x}" ]; then
+  if [ -n "${FPY_BIN:-}" ]; then
+    FPY_CMD="$FPY_BIN run --python $PYTHON_BIN"
+  else
+    FPY_CMD="cargo run -- run --python $PYTHON_BIN"
+  fi
+fi
 PRE_INPUT="${PRE_INPUT-1+1}"
 INPUTS="${INPUTS-$PRE_INPUT}"
-STARTUP_WAIT="${STARTUP_WAIT:-2}"
-PRE_INPUT_WAIT="${PRE_INPUT_WAIT:-1}"
-EXIT_WAIT="${EXIT_WAIT:-1}"
 CAPTURE_LINES="${CAPTURE_LINES:-40}"
 BEFORE_LOG="${BEFORE_LOG:-$ROOT/target/fpy-tmux-repro.before.log}"
 AFTER_LOG="${AFTER_LOG:-$ROOT/target/fpy-tmux-repro.after.log}"
 PASTE_TEXT="${PASTE_TEXT:-x = 1
 y = 2}"
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
+POLL_SECONDS="${POLL_SECONDS:-0.05}"
+EXIT_WAIT="${EXIT_WAIT:-0.2}"
 
 mkdir -p "$ROOT/target"
 
@@ -33,197 +42,327 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" zsh
-tmux send-keys -t "$SESSION" "cd $ROOT" Enter
-tmux send-keys -t "$SESSION" "$FPY_CMD" Enter
-sleep "$STARTUP_WAIT"
+now_ns() {
+  perl -MTime::HiRes=time -e 'printf "%.0f\n", time() * 1000000000'
+}
 
-if [ -n "$INPUTS" ]; then
+capture_pane() {
+  tmux capture-pane -pt "$1" -S "-$CAPTURE_LINES"
+}
+
+pane_has_usable_input() {
+  pane_text=$1
+  printf '%s' "$pane_text" | grep -F "Ctrl-P palette" >/dev/null 2>&1
+}
+
+pane_is_submit_ready() {
+  pane_text=$1
+  printf '%s' "$pane_text" | grep -F "Ctrl-P palette" >/dev/null 2>&1 || return 1
+  printf '%s' "$pane_text" | grep -F "Connecting to kernel..." >/dev/null 2>&1 && return 1
+  printf '%s' "$pane_text" | grep -F "Kernel busy. Ctrl-C to interrupt" >/dev/null 2>&1 && return 1
+  return 0
+}
+
+pane_has_text() {
+  pane_text=$1
+  needle=$2
+  printf '%s' "$pane_text" | grep -F "$needle" >/dev/null 2>&1
+}
+
+wait_for_predicate() {
+  session=$1
+  predicate=$2
+  description=$3
+  streak_required=${4:-1}
+  deadline=$(($(now_ns) + TIMEOUT_SECONDS * 1000000000))
+  streak=0
+
+  while :; do
+    pane_text=$(capture_pane "$session")
+    if "$predicate" "$pane_text"; then
+      streak=$((streak + 1))
+      if [ "$streak" -ge "$streak_required" ]; then
+        return 0
+      fi
+    else
+      streak=0
+    fi
+
+    if [ "$(now_ns)" -ge "$deadline" ]; then
+      log_file="$ROOT/target/$SESSION-$description.timeout.log"
+      printf '%s\n' "$pane_text" > "$log_file"
+      printf 'timed out waiting for %s; pane saved to %s\n' "$description" "$log_file" >&2
+      return 1
+    fi
+
+    sleep "$POLL_SECONDS"
+  done
+}
+
+wait_for_text() {
+  session=$1
+  needle=$2
+  description=$3
+  deadline=$(($(now_ns) + TIMEOUT_SECONDS * 1000000000))
+
+  while :; do
+    pane_text=$(capture_pane "$session")
+    if pane_has_text "$pane_text" "$needle"; then
+      return 0
+    fi
+
+    if [ "$(now_ns)" -ge "$deadline" ]; then
+      log_file="$ROOT/target/$SESSION-$description.timeout.log"
+      printf '%s\n' "$pane_text" > "$log_file"
+      printf 'timed out waiting for %s; pane saved to %s\n' "$description" "$log_file" >&2
+      return 1
+    fi
+
+    sleep "$POLL_SECONDS"
+  done
+}
+
+wait_for_usable_input() {
+  wait_for_predicate "$1" pane_has_usable_input usable-input 2
+}
+
+wait_for_submit_ready() {
+  wait_for_predicate "$1" pane_is_submit_ready submit-ready 2
+}
+
+submit_cell() {
+  session=$1
+  text=$2
+  wait_for_submit_ready "$session"
+  tmux send-keys -t "$session" -l "$text"
+  tmux send-keys -t "$session" Enter
+  wait_for_submit_ready "$session"
+}
+
+submit_lines() {
+  session=$1
+  inputs=$2
+  if [ -z "$inputs" ]; then
+    return 0
+  fi
+
   old_ifs=$IFS
   IFS='
 '
-  for input in $INPUTS; do
-    tmux send-keys -t "$SESSION" "$input" Enter
-    sleep "$PRE_INPUT_WAIT"
+  for input in $inputs; do
+    submit_cell "$session" "$input"
   done
   IFS=$old_ifs
-fi
+}
+
+tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" zsh
+tmux send-keys -t "$SESSION" "cd $ROOT" Enter
+tmux send-keys -t "$SESSION" "$FPY_CMD" Enter
+wait_for_usable_input "$SESSION"
+
+submit_lines "$SESSION" "$INPUTS"
 
 tmux capture-pane -pt "$SESSION" -S "-$CAPTURE_LINES" > "$BEFORE_LOG"
 
 case "$ACTION" in
   edit-left)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "abcd"
     tmux send-keys -t "$SESSION" Left Left
     tmux send-keys -t "$SESSION" -l "X"
     tmux send-keys -t "$SESSION" Enter
     ;;
   history-up)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Up Enter
+    wait_for_submit_ready "$SESSION"
     ;;
   vim-goto)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "a"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    sleep 0.2
+    wait_for_text "$SESSION" "2" "shift-enter-a"
     tmux send-keys -t "$SESSION" -l "b"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    sleep 0.2
+    wait_for_text "$SESSION" "3" "shift-enter-b"
     tmux send-keys -t "$SESSION" -l "c"
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" 3 G
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" i
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" -l "X"
     ;;
   vim-normal)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "abc"
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" 0
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" i
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" -l "X"
     tmux send-keys -t "$SESSION" Enter
     ;;
   shift-enter)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     ;;
   ctrl-c-multiline)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    sleep 0.2
+    wait_for_text "$SESSION" "2" "multiline-second-line"
     tmux send-keys -t "$SESSION" -l "def"
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" C-c
     ;;
   ctrl-c-multiline-bottom)
-    tmux send-keys -t "$SESSION" -l "!ls -lah"
-    tmux send-keys -t "$SESSION" Enter
-    sleep 0.5
-    tmux send-keys -t "$SESSION" -l "!ls -lah"
-    tmux send-keys -t "$SESSION" Enter
-    sleep 0.5
-    tmux send-keys -t "$SESSION" -l "!ls -lah"
-    tmux send-keys -t "$SESSION" Enter
-    sleep 0.5
-    tmux send-keys -t "$SESSION" -l "!ls -lah"
-    tmux send-keys -t "$SESSION" Enter
-    sleep 0.5
+    submit_cell "$SESSION" "!ls -lah"
+    submit_cell "$SESSION" "!ls -lah"
+    submit_cell "$SESSION" "!ls -lah"
+    submit_cell "$SESSION" "!ls -lah"
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    sleep 0.2
+    wait_for_text "$SESSION" "2" "multiline-bottom-second-line"
     tmux send-keys -t "$SESSION" -l "def"
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" C-c
     ;;
   paste)
-    tmux set-buffer -b fpy-repro "$PASTE_TEXT"
-    tmux paste-buffer -p -t "$SESSION" -b fpy-repro
+    buffer_name="$SESSION-paste"
+    tmux set-buffer -b "$buffer_name" "$PASTE_TEXT"
+    tmux paste-buffer -p -t "$SESSION" -b "$buffer_name"
+    tmux delete-buffer -b "$buffer_name" >/dev/null 2>&1 || true
     ;;
   compose-while-busy)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "import time; time.sleep(3); 42" Enter
-    sleep 0.5
+    wait_for_text "$SESSION" "Kernel busy. Ctrl-C to interrupt" "kernel-busy"
     tmux send-keys -t "$SESSION" -l "1+1"
     ;;
   stdin-reply)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "name = input('Name: '); print(name)" Enter
-    sleep 1
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "bob"
     tmux send-keys -t "$SESSION" Enter
+    wait_for_text "$SESSION" "bob" "stdin-reply-output"
     ;;
   stdin-empty-reply)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "repr(input())" Enter
-    sleep 1
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Enter
+    wait_for_text "$SESSION" "Out[1]" "stdin-empty-reply-output"
     ;;
   stdin-prompt)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "input()" Enter
-    sleep 1
+    wait_for_submit_ready "$SESSION"
     ;;
   stdin-shift-enter)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "input()" Enter
-    sleep 1
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     ;;
   stdin-ctrl-d)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "input()" Enter
-    sleep 1
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-d
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" -l "x"
     tmux send-keys -t "$SESSION" Enter
+    wait_for_text "$SESSION" "Out[1]" "stdin-ctrl-d-output"
     ;;
   stdin-ctrl-c)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "input()" Enter
-    sleep 1
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-c
+    wait_for_text "$SESSION" "KeyboardInterrupt" "stdin-ctrl-c-output"
     ;;
   pdb-basic)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" 'import pdb; pdb.set_trace(); print("after")' Enter
-    sleep 1
+    wait_for_text "$SESSION" "(Pdb)" "pdb-prompt-initial" || wait_for_text "$SESSION" "ipdb>" "ipdb-prompt-initial"
     tmux send-keys -t "$SESSION" -l 'where'
     tmux send-keys -t "$SESSION" Enter
-    sleep 0.5
+    wait_for_text "$SESSION" "where" "pdb-where"
     tmux send-keys -t "$SESSION" -l 'p 1+1'
     tmux send-keys -t "$SESSION" Enter
-    sleep 0.5
+    wait_for_text "$SESSION" "2" "pdb-print"
     tmux send-keys -t "$SESSION" -l 'c'
     tmux send-keys -t "$SESSION" Enter
+    wait_for_text "$SESSION" "after" "pdb-continue"
     ;;
   vim-open-below)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" o
     ;;
   vim-open-below-twice)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" o
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" o
     ;;
   ctrl-l)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-l
     ;;
   palette)
+    wait_for_usable_input "$SESSION"
     tmux send-keys -t "$SESSION" C-p
     ;;
   palette-cycle)
+    wait_for_usable_input "$SESSION"
     tmux send-keys -t "$SESSION" C-p
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" C-p
     ;;
   palette-move-cycle)
+    wait_for_usable_input "$SESSION"
     tmux send-keys -t "$SESSION" C-p
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" Down
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.2
+    sleep 0.1
     tmux send-keys -t "$SESSION" C-p
     ;;
   ctrl-d)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-d
     ;;
   exitpy)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "exit()" Enter
+    wait_for_text "$SESSION" "Kernel exited unexpectedly" "kernel-exit"
     ;;
   quit)
+    wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" "quit()" Enter
+    wait_for_text "$SESSION" "Kernel exited unexpectedly" "kernel-quit"
     ;;
   none)
+    wait_for_submit_ready "$SESSION"
     ;;
   *)
     printf 'unknown action: %s\n' "$ACTION" >&2
