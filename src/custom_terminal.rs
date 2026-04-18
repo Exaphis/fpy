@@ -225,24 +225,25 @@ fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
         let row = &next.content[row_start..row_end];
         let bg = row.last().map(|cell| cell.bg).unwrap_or(Color::Reset);
 
-        let mut last_nonblank_column = 0usize;
+        let mut last_nonblank_column = None;
         let mut column = 0usize;
         while column < row.len() {
             let cell = &row[column];
             let width = display_width(cell.symbol());
             if cell.symbol() != " " || cell.bg != bg || cell.modifier != Modifier::empty() {
-                last_nonblank_column = column + (width.saturating_sub(1));
+                last_nonblank_column = Some(column + width.saturating_sub(1));
             }
             column += width.max(1);
         }
 
-        if last_nonblank_column + 1 < row.len() {
-            let x = next.area.x + last_nonblank_column as u16 + 1;
+        let clear_start = last_nonblank_column.map_or(0usize, |column| column + 1);
+        if clear_start < row.len() {
+            let x = next.area.x + clear_start as u16;
             let y = next.area.y + y;
             updates.push(DrawCommand::ClearToEnd { x, y, bg });
         }
 
-        last_nonblank_columns[y as usize] = last_nonblank_column as u16;
+        last_nonblank_columns[y as usize] = last_nonblank_column.unwrap_or(0) as u16;
     }
 
     let mut invalidated = 0usize;
@@ -422,5 +423,58 @@ fn to_crossterm_color(color: Color) -> crossterm::style::Color {
         Color::White => crossterm::style::Color::White,
         Color::Rgb(r, g, b) => crossterm::style::Color::Rgb { r, g, b },
         Color::Indexed(index) => crossterm::style::Color::AnsiValue(index),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DrawCommand, diff_buffers};
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        style::Style,
+        style::Color,
+    };
+
+    #[test]
+    fn fully_blank_rows_clear_from_column_zero() {
+        let area = Rect::new(0, 0, 4, 1);
+        let mut previous = Buffer::empty(area);
+        previous.set_string(0, 0, "abcd", Style::default());
+        let next = Buffer::empty(area);
+
+        let updates = diff_buffers(&previous, &next);
+        assert!(
+            updates.iter().any(|command| matches!(
+                command,
+                DrawCommand::ClearToEnd {
+                    x: 0,
+                    y: 0,
+                    bg: Color::Reset,
+                }
+            )),
+            "expected a clear from column zero, got {updates:#?}"
+        );
+    }
+
+    #[test]
+    fn partially_blank_rows_clear_after_last_visible_cell() {
+        let area = Rect::new(0, 0, 4, 1);
+        let previous = Buffer::empty(area);
+        let mut next = Buffer::empty(area);
+        next.set_string(0, 0, "ab", Style::default());
+
+        let updates = diff_buffers(&previous, &next);
+        assert!(
+            updates.iter().any(|command| matches!(
+                command,
+                DrawCommand::ClearToEnd {
+                    x: 2,
+                    y: 0,
+                    bg: Color::Reset,
+                }
+            )),
+            "expected a clear after the last visible cell, got {updates:#?}"
+        );
     }
 }
