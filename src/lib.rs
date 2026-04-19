@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod connection;
 mod custom_terminal;
+mod history;
 mod insert_history;
 mod jupyter;
 mod kernel;

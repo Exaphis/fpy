@@ -1,4 +1,7 @@
-use std::time::{Duration as ElapsedDuration, Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration as ElapsedDuration, Instant},
+};
 
 use anyhow::Result;
 use tokio::{
@@ -10,14 +13,34 @@ use tokio::{
 use crate::{
     cli::{Cli, Command},
     connection::ConnectionFile,
+    history::{self, HistoryOutcome, HistorySession},
     kernel::{KernelEvent, KernelSession, KernelStatus, LaunchConfig},
     ui::{AppUi, UiAction},
 };
 
 pub async fn run(cli: Cli) -> Result<()> {
+    let history_root = history::default_root_dir().ok();
+    let mut history_warnings = Vec::new();
+    let loaded_history = if let Some(root) = history_root.as_deref() {
+        match history::load_entries(root) {
+            Ok(entries) => entries,
+            Err(error) => {
+                history_warnings.push(format!("persistent history load failed: {error}"));
+                Vec::new()
+            }
+        }
+    } else {
+        history_warnings.push("persistent history disabled: HOME is not set".to_string());
+        Vec::new()
+    };
+
     let (startup_message, bootstrap_task, mut bootstrap_rx) = start_bootstrap(cli)?;
     let mut ui = AppUi::new("starting".to_string())?;
+    ui.load_history(loaded_history);
     ui.insert_transcript(startup_message)?;
+    for warning in history_warnings {
+        ui.insert_transcript(format!("warning: {warning}"))?;
+    }
     let mut active_session: Option<ActiveSession> = None;
     let mut ui_tick = time::interval(Duration::from_millis(120));
     ui_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -34,7 +57,14 @@ pub async fn run(cli: Cli) -> Result<()> {
                     break;
                 }
             } else {
-                match run_bootstrap_iteration(&mut ui, &mut bootstrap_rx, &mut ui_tick).await? {
+                match run_bootstrap_iteration(
+                    &mut ui,
+                    &mut bootstrap_rx,
+                    &mut ui_tick,
+                    history_root.as_ref(),
+                )
+                .await?
+                {
                     BootstrapOutcome::Continue => {}
                     BootstrapOutcome::Exit => break,
                     BootstrapOutcome::Activated(session) => active_session = Some(*session),
@@ -62,6 +92,14 @@ struct ActiveSession {
     kernel: KernelSession,
     kernel_events: tokio::sync::mpsc::UnboundedReceiver<KernelEvent>,
     execution_timer: ExecutionTimer,
+    history: Option<HistorySession>,
+    pending_history: Option<PendingHistoryEntry>,
+}
+
+struct PendingHistoryEntry {
+    entry_seq: Option<u64>,
+    ui_history_index: usize,
+    outcome: HistoryOutcome,
 }
 
 type BootstrapReceiver = oneshot::Receiver<Result<BootstrappedSession>>;
@@ -132,26 +170,62 @@ async fn run_active_iteration(
     if ui.needs_animation() {
         tokio::select! {
             event = session.kernel_events.recv() => {
-                handle_kernel_event_stream(ui, &mut session.execution_timer, event)
+                handle_kernel_event_stream(
+                    ui,
+                    &mut session.execution_timer,
+                    &mut session.history,
+                    &mut session.pending_history,
+                    event,
+                )
             }
             _ = liveness_check.tick() => {
-                handle_local_kernel_liveness(ui, &mut session.kernel, &mut session.execution_timer)
+                handle_local_kernel_liveness(
+                    ui,
+                    &mut session.kernel,
+                    &mut session.execution_timer,
+                    &mut session.pending_history,
+                )
             }
             _ = ui_tick.tick() => Ok(false),
             input = ui.next_action() => {
-                handle_ready_input(ui, &mut session.kernel, &mut session.execution_timer, input).await
+                handle_ready_input(
+                    ui,
+                    &mut session.kernel,
+                    &mut session.execution_timer,
+                    &mut session.history,
+                    &mut session.pending_history,
+                    input,
+                ).await
             }
         }
     } else {
         tokio::select! {
             event = session.kernel_events.recv() => {
-                handle_kernel_event_stream(ui, &mut session.execution_timer, event)
+                handle_kernel_event_stream(
+                    ui,
+                    &mut session.execution_timer,
+                    &mut session.history,
+                    &mut session.pending_history,
+                    event,
+                )
             }
             _ = liveness_check.tick() => {
-                handle_local_kernel_liveness(ui, &mut session.kernel, &mut session.execution_timer)
+                handle_local_kernel_liveness(
+                    ui,
+                    &mut session.kernel,
+                    &mut session.execution_timer,
+                    &mut session.pending_history,
+                )
             }
             input = ui.next_action() => {
-                handle_ready_input(ui, &mut session.kernel, &mut session.execution_timer, input).await
+                handle_ready_input(
+                    ui,
+                    &mut session.kernel,
+                    &mut session.execution_timer,
+                    &mut session.history,
+                    &mut session.pending_history,
+                    input,
+                ).await
             }
         }
     }
@@ -161,11 +235,12 @@ async fn run_bootstrap_iteration(
     ui: &mut AppUi,
     bootstrap_rx: &mut BootstrapReceiver,
     ui_tick: &mut time::Interval,
+    history_root: Option<&PathBuf>,
 ) -> Result<BootstrapOutcome> {
     if ui.needs_animation() {
         tokio::select! {
             bootstrap_result = bootstrap_rx => {
-                activate_bootstrap_result(ui, bootstrap_result)
+                activate_bootstrap_result(ui, bootstrap_result, history_root)
             }
             _ = ui_tick.tick() => Ok(BootstrapOutcome::Continue),
             input = ui.next_action() => {
@@ -175,7 +250,7 @@ async fn run_bootstrap_iteration(
     } else {
         tokio::select! {
             bootstrap_result = bootstrap_rx => {
-                activate_bootstrap_result(ui, bootstrap_result)
+                activate_bootstrap_result(ui, bootstrap_result, history_root)
             }
             input = ui.next_action() => {
                 handle_pending_input(ui, input)
@@ -187,26 +262,42 @@ async fn run_bootstrap_iteration(
 fn activate_bootstrap_result(
     ui: &mut AppUi,
     bootstrap_result: Result<BootstrapTaskResult, oneshot::error::RecvError>,
+    history_root: Option<&PathBuf>,
 ) -> Result<BootstrapOutcome> {
     let bootstrap_result = bootstrap_result
         .map_err(|_| anyhow::anyhow!("kernel startup task terminated unexpectedly"))?;
     let (kernel, kernel_events) = bootstrap_result?;
     ui.set_connection_summary(kernel.connection_summary());
     ui.mark_session_ready();
+    let history = if let Some(root) = history_root {
+        match HistorySession::open(root) {
+            Ok(history) => Some(history),
+            Err(error) => {
+                ui.insert_transcript(format!("warning: persistent history disabled: {error}"))?;
+                None
+            }
+        }
+    } else {
+        None
+    };
     Ok(BootstrapOutcome::Activated(Box::new(ActiveSession {
         kernel,
         kernel_events,
         execution_timer: ExecutionTimer::default(),
+        history,
+        pending_history: None,
     })))
 }
 
 fn handle_kernel_event_stream(
     ui: &mut AppUi,
     execution_timer: &mut ExecutionTimer,
+    history: &mut Option<HistorySession>,
+    pending_history: &mut Option<PendingHistoryEntry>,
     event: Option<KernelEvent>,
 ) -> Result<bool> {
     match event {
-        Some(event) => handle_kernel_event(ui, execution_timer, event),
+        Some(event) => handle_kernel_event(ui, execution_timer, history, pending_history, event),
         None => Ok(true),
     }
 }
@@ -215,9 +306,11 @@ fn handle_local_kernel_liveness(
     ui: &mut AppUi,
     kernel: &mut KernelSession,
     execution_timer: &mut ExecutionTimer,
+    pending_history: &mut Option<PendingHistoryEntry>,
 ) -> Result<bool> {
     if let Some(message) = kernel.poll_local_exit()? {
         execution_timer.clear();
+        pending_history.take();
         ui.set_status(KernelStatus::Disconnected);
         ui.insert_transcript(message)?;
         Ok(true)
@@ -230,10 +323,12 @@ async fn handle_ready_input(
     ui: &mut AppUi,
     kernel: &mut KernelSession,
     execution_timer: &mut ExecutionTimer,
+    history: &mut Option<HistorySession>,
+    pending_history: &mut Option<PendingHistoryEntry>,
     input: Result<Option<UiAction>>,
 ) -> Result<bool> {
     if let Some(action) = input? {
-        handle_ready_ui_action(ui, kernel, execution_timer, action).await
+        handle_ready_ui_action(ui, kernel, execution_timer, history, pending_history, action).await
     } else {
         Ok(false)
     }
@@ -255,6 +350,8 @@ fn handle_pending_input(
 fn handle_kernel_event(
     ui: &mut AppUi,
     execution_timer: &mut ExecutionTimer,
+    history: &mut Option<HistorySession>,
+    pending_history: &mut Option<PendingHistoryEntry>,
     event: KernelEvent,
 ) -> Result<bool> {
     match event {
@@ -266,11 +363,16 @@ fn handle_kernel_event(
             match status {
                 KernelStatus::Idle => {
                     if let Some(duration) = execution_timer.finish() {
+                        if let Some(entry) = pending_history.take() {
+                            persist_history_done(ui, history, &entry, duration)?;
+                            ui.record_history_completion(entry.ui_history_index, duration, entry.outcome);
+                        }
                         ui.insert_runtime(duration)?;
                     }
                 }
                 KernelStatus::Disconnected => {
                     execution_timer.clear();
+                    pending_history.take();
                     return Ok(true);
                 }
                 _ => {}
@@ -302,6 +404,13 @@ fn handle_kernel_event(
             }
         }
         KernelEvent::Error { traceback } => {
+            if let Some(entry) = pending_history.as_mut() {
+                entry.outcome = if traceback.iter().any(|line| line.contains("KeyboardInterrupt")) {
+                    HistoryOutcome::Interrupted
+                } else {
+                    HistoryOutcome::Error
+                };
+            }
             ui.clear_input_request();
             ui.insert_transcript(traceback.join("\n"))?;
         }
@@ -317,6 +426,7 @@ fn handle_kernel_event(
         }
         KernelEvent::Fatal(text) => {
             execution_timer.clear();
+            pending_history.take();
             ui.set_status(KernelStatus::Disconnected);
             ui.insert_transcript(format!("fatal: {text}"))?;
             return Ok(true);
@@ -351,10 +461,28 @@ async fn handle_ready_ui_action(
     ui: &mut AppUi,
     kernel: &mut KernelSession,
     execution_timer: &mut ExecutionTimer,
+    history: &mut Option<HistorySession>,
+    pending_history: &mut Option<PendingHistoryEntry>,
     action: UiAction,
 ) -> Result<bool> {
     match action {
         UiAction::Submit(code) => {
+            let ui_history_index = ui.record_history_submission(&code);
+            let mut entry_seq = None;
+            if let Some(history_session) = history.as_mut() {
+                match history_session.append_cell(&code) {
+                    Ok(seq) => entry_seq = Some(seq),
+                    Err(error) => {
+                        *history = None;
+                        ui.insert_transcript(format!("warning: persistent history disabled: {error}"))?;
+                    }
+                }
+            }
+            *pending_history = Some(PendingHistoryEntry {
+                entry_seq,
+                ui_history_index,
+                outcome: HistoryOutcome::Ok,
+            });
             kernel.execute(code)?;
             ui.set_status(KernelStatus::Busy);
             Ok(false)
@@ -387,6 +515,7 @@ async fn handle_ready_ui_action(
             execution_timer.clear();
             match kernel.restart().await {
                 Ok(()) => {
+                    pending_history.take();
                     ui.set_connection_summary(kernel.connection_summary());
                     ui.mark_session_ready();
                     ui.insert_transcript("kernel restarted")?;
@@ -400,6 +529,21 @@ async fn handle_ready_ui_action(
             Ok(false)
         }
     }
+}
+
+fn persist_history_done(
+    ui: &mut AppUi,
+    history: &mut Option<HistorySession>,
+    entry: &PendingHistoryEntry,
+    duration: ElapsedDuration,
+) -> Result<()> {
+    if let (Some(history_session), Some(entry_seq)) = (history.as_mut(), entry.entry_seq)
+        && let Err(error) = history_session.append_done(entry_seq, duration, entry.outcome)
+    {
+        *history = None;
+        ui.insert_transcript(format!("warning: persistent history disabled: {error}"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

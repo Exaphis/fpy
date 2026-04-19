@@ -31,6 +31,8 @@ BEFORE_LOG="${BEFORE_LOG:-$ROOT/target/fpy-tmux-repro.before.log}"
 AFTER_LOG="${AFTER_LOG:-$ROOT/target/fpy-tmux-repro.after.log}"
 PASTE_TEXT="${PASTE_TEXT:-x = 1
 y = 2}"
+SEARCH_QUERY="${SEARCH_QUERY:-}"
+SEARCH_DOWN_COUNT="${SEARCH_DOWN_COUNT:-0}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 POLL_SECONDS="${POLL_SECONDS:-0.05}"
 EXIT_WAIT="${EXIT_WAIT:-0.2}"
@@ -155,7 +157,15 @@ submit_lines() {
   IFS=$old_ifs
 }
 
-tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" zsh
+if [ -n "${FPY_HISTORY_DIR+x}" ] && [ -n "${XDG_DATA_HOME+x}" ]; then
+  tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" env FPY_HISTORY_DIR="$FPY_HISTORY_DIR" XDG_DATA_HOME="$XDG_DATA_HOME" zsh
+elif [ -n "${FPY_HISTORY_DIR+x}" ]; then
+  tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" env FPY_HISTORY_DIR="$FPY_HISTORY_DIR" zsh
+elif [ -n "${XDG_DATA_HOME+x}" ]; then
+  tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" env XDG_DATA_HOME="$XDG_DATA_HOME" zsh
+else
+  tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" zsh
+fi
 tmux send-keys -t "$SESSION" "cd $ROOT" Enter
 tmux send-keys -t "$SESSION" "$FPY_CMD" Enter
 wait_for_usable_input "$SESSION"
@@ -346,6 +356,33 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" Escape
     sleep 0.1
     tmux send-keys -t "$SESSION" C-p
+    ;;
+  history-search-open)
+    wait_for_usable_input "$SESSION"
+    tmux send-keys -t "$SESSION" C-r
+    sleep 0.1
+    if [ -n "$SEARCH_QUERY" ]; then
+      tmux send-keys -t "$SESSION" -l "$SEARCH_QUERY"
+      wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
+    fi
+    if [ "$SEARCH_DOWN_COUNT" -gt 0 ]; then
+      i=0
+      while [ "$i" -lt "$SEARCH_DOWN_COUNT" ]; do
+        tmux send-keys -t "$SESSION" Down
+        i=$((i + 1))
+        sleep 0.05
+      done
+    fi
+    ;;
+  history-search-load)
+    wait_for_usable_input "$SESSION"
+    tmux send-keys -t "$SESSION" C-r
+    sleep 0.1
+    if [ -n "$SEARCH_QUERY" ]; then
+      tmux send-keys -t "$SESSION" -l "$SEARCH_QUERY"
+      wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
+    fi
+    tmux send-keys -t "$SESSION" Enter
     ;;
   ctrl-d)
     wait_for_submit_ready "$SESSION"

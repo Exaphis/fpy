@@ -21,6 +21,7 @@ Implemented:
 - interrupt, restart, and connection info via a command palette
 - syntax-highlighted input plus syntax-highlighted echoed `In [...]` cells
 - Vim-style editing via `edtui`, including multiline editing and bracketed paste
+- persistent command history across sessions with per-session append-only log files
 - inline prompt UI that tries to preserve normal terminal scrollback and shell behavior
 - tmux-driven end-to-end regression coverage for prompt and terminal behavior
 
@@ -28,7 +29,6 @@ Out of scope today:
 
 - rich notebook output such as images, HTML, widgets, or LaTeX rendering
 - completion, inspection, or a full IPython parity feature set
-- persistent command history across sessions
 
 ## Usage
 
@@ -56,7 +56,8 @@ Important bindings:
 - `Ctrl-D`: exit when the current input is empty
 - `Ctrl-L`: clear the visible screen
 - `Ctrl-P`: open the command palette
-- `Up` / `Down`: in-session history recall when editing a single-line cell
+- `Ctrl-R`: fuzzy-search persistent history and load a previous cell into the editor
+- `Up` / `Down`: persistent history recall when editing a single-line cell
 
 The editor is powered by `edtui`, so normal/visual/insert mode behavior is Vim-like rather than shell-like. The input area uses line numbers on the left, a mode/status row below the editor, and grows inline until it reaches the bottom of the terminal, after which the editor scrolls internally.
 

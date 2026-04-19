@@ -6,6 +6,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use tempfile::TempDir;
+use uuid::Uuid;
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -349,6 +352,219 @@ fn history_up_reruns_previous_cell() {
 }
 
 #[test]
+fn history_search_shows_multiple_results_and_multiline_preview() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "import torch\ntorch.cuda.is_available()",
+        Some(800_000_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "import time\ntime.sleep(1)\n42",
+        Some(1_000_000_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "import os\nos.getcwd()",
+        Some(5_000_000),
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "history-search-open",
+        "history-search-open",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "import"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "History Search");
+    assert_contains(&output.after, "query: import");
+    assert_contains(&output.after, "import os …");
+    assert_contains(&output.after, "import time …");
+    assert_contains(&output.after, "import torch …");
+    assert_contains(&output.after, "preview");
+    assert_contains(&output.after, "os.getcwd()");
+}
+
+#[test]
+fn history_search_recenters_results_before_selection_hits_bottom() {
+    let history_dir = TempDir::new().expect("history dir");
+    for index in 0..20 {
+        write_history_record(
+            history_dir.path(),
+            &format!("import mod{index}\nline{index}"),
+            None,
+            None,
+        );
+    }
+
+    let Some(output) = run_repro(
+        "history-search-recenter",
+        "history-search-open",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "import"),
+            ("SEARCH_DOWN_COUNT", "5"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "import mod18 …");
+    assert_not_contains(&output.after, "import mod19 …");
+    assert_contains(&output.after, "> import mod14 …");
+    assert_contains(&output.after, "line14");
+}
+
+#[test]
+fn history_search_scrolls_results_with_selection() {
+    let history_dir = TempDir::new().expect("history dir");
+    for index in 0..12 {
+        write_history_record(
+            history_dir.path(),
+            &format!("import mod{index}\nline{index}"),
+            None,
+            None,
+        );
+    }
+
+    let Some(output) = run_repro(
+        "history-search-scroll",
+        "history-search-open",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "import"),
+            ("SEARCH_DOWN_COUNT", "8"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "> import mod3 …");
+    assert_contains(&output.after, "line3");
+    assert_not_contains(&output.after, "import mod11 …");
+}
+
+#[test]
+fn history_search_preview_expands_to_show_full_multiline_code_when_space_allows() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "alpha\n1\n2\n3\n4\n5\n6",
+        None,
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "history-search-preview-expand",
+        "history-search-open",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "alpha"),
+            ("TMUX_SIZE", "120x40"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "alpha");
+    assert_contains(&output.after, "1");
+    assert_contains(&output.after, "2");
+    assert_contains(&output.after, "3");
+    assert_contains(&output.after, "4");
+    assert_contains(&output.after, "5");
+    assert_contains(&output.after, "6");
+}
+
+#[test]
+fn history_search_matches_multiline_cells_and_loads_previewed_code() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "import torch\ntorch.cuda.is_available()",
+        Some(800_000_000),
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "history-search-load",
+        "history-search-load",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "cuda"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "1 import torch");
+    assert_contains(&output.after, "2 torch.cuda.is_available()");
+    assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
+}
+
+#[test]
+fn persistent_history_is_available_in_new_sessions() {
+    let history_dir = TempDir::new().expect("history dir");
+    let history_dir_path = history_dir.path().display().to_string();
+
+    let Some(first) = run_repro(
+        "persistent-history-write",
+        "ctrl-d",
+        &[
+            ("PRE_INPUT", "40+2"),
+            ("INPUTS", "40+2"),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir_path.as_str()),
+        ],
+    ) else {
+        return;
+    };
+    assert_contains(&first.after, "Out[1]: 42");
+
+    let Some(second) = run_repro(
+        "persistent-history-read",
+        "history-up",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir_path.as_str()),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&second.after, "In [1]: 40+2");
+    assert_contains(&second.after, "Out[1]: 42");
+}
+
+#[test]
 fn palette_clears_underlying_empty_prompt() {
     let Some(output) = run_repro(
         "palette-empty",
@@ -547,6 +763,36 @@ fn assert_no_line_contains_all(haystack: &str, needles: &[&str]) {
         needles,
         haystack
     );
+}
+
+fn write_history_record(
+    root: &Path,
+    code: &str,
+    duration_ns: Option<u64>,
+    outcome: Option<&str>,
+) {
+    let host = "test-host";
+    let host_dir = root.join(host);
+    fs::create_dir_all(&host_dir).expect("create host history dir");
+    let session_id = Uuid::now_v7();
+    let path = host_dir.join(format!("{session_id}-123.jsonl"));
+
+    let mut contents = format!(
+        "{{\"v\":1,\"type\":\"cell\",\"session_id\":\"{}\",\"entry_seq\":1,\"ts_unix_ns\":1,\"host\":\"{}\",\"pid\":123,\"code\":{}}}\n",
+        session_id,
+        host,
+        serde_json::to_string(code).expect("serialize code"),
+    );
+    if let Some(duration_ns) = duration_ns {
+        let outcome = outcome.unwrap_or("ok");
+        contents.push_str(&format!(
+            "{{\"v\":1,\"type\":\"cell_done\",\"session_id\":\"{}\",\"entry_seq\":1,\"ts_unix_ns\":2,\"duration_ns\":{},\"outcome\":\"{}\"}}\n",
+            session_id,
+            duration_ns,
+            outcome,
+        ));
+    }
+    fs::write(path, contents).expect("write history record");
 }
 
 fn missing_prerequisites(repo_root: &Path) -> Option<String> {
