@@ -42,7 +42,6 @@ pub enum KernelEvent {
         text: String,
     },
     Stream {
-        name: String,
         text: String,
     },
     Error {

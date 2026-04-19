@@ -396,12 +396,8 @@ fn handle_kernel_event(
                 .unwrap_or_else(|| "Out[?]".to_string());
             ui.insert_transcript(format!("{prompt}: {text}"))?;
         }
-        KernelEvent::Stream { name, text } => {
-            if name == "stderr" {
-                ui.insert_transcript(format!("stderr: {text}"))?;
-            } else {
-                ui.insert_transcript(text)?;
-            }
+        KernelEvent::Stream { text } => {
+            ui.insert_transcript(text)?;
         }
         KernelEvent::Error { traceback } => {
             if let Some(entry) = pending_history.as_mut() {

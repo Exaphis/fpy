@@ -50,12 +50,6 @@ pub(super) fn iopub_message_to_events(message: WireMessage) -> Vec<KernelEvent> 
                 .to_string(),
         }],
         "stream" => vec![KernelEvent::Stream {
-            name: message
-                .content
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("stdout")
-                .to_string(),
             text: message
                 .content
                 .get("text")
