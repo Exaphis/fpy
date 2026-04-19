@@ -48,14 +48,11 @@ pub async fn run(cli: Cli) -> Result<()> {
     liveness_check.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     let result: Result<()> = async {
-        loop {
-            ui.redraw()?;
+        ui.redraw()?;
 
-            if let Some(session) = active_session.as_mut() {
-                if run_active_iteration(&mut ui, session, &mut liveness_check, &mut ui_tick).await?
-                {
-                    break;
-                }
+        loop {
+            let should_exit = if let Some(session) = active_session.as_mut() {
+                run_active_iteration(&mut ui, session, &mut liveness_check, &mut ui_tick).await?
             } else {
                 match run_bootstrap_iteration(
                     &mut ui,
@@ -65,10 +62,21 @@ pub async fn run(cli: Cli) -> Result<()> {
                 )
                 .await?
                 {
-                    BootstrapOutcome::Continue => {}
-                    BootstrapOutcome::Exit => break,
-                    BootstrapOutcome::Activated(session) => active_session = Some(*session),
+                    BootstrapOutcome::Continue => false,
+                    BootstrapOutcome::Exit => true,
+                    BootstrapOutcome::Activated(session) => {
+                        active_session = Some(*session);
+                        false
+                    }
                 }
+            };
+
+            if ui.needs_redraw() {
+                ui.redraw()?;
+            }
+
+            if should_exit {
+                break;
             }
         }
 
@@ -186,7 +194,10 @@ async fn run_active_iteration(
                     &mut session.pending_history,
                 )
             }
-            _ = ui_tick.tick() => Ok(false),
+            _ = ui_tick.tick() => {
+                ui.request_redraw();
+                Ok(false)
+            },
             input = ui.next_action() => {
                 handle_ready_input(
                     ui,
@@ -242,7 +253,10 @@ async fn run_bootstrap_iteration(
             bootstrap_result = bootstrap_rx => {
                 activate_bootstrap_result(ui, bootstrap_result, history_root)
             }
-            _ = ui_tick.tick() => Ok(BootstrapOutcome::Continue),
+            _ = ui_tick.tick() => {
+                ui.request_redraw();
+                Ok(BootstrapOutcome::Continue)
+            },
             input = ui.next_action() => {
                 handle_pending_input(ui, input)
             }

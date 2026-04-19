@@ -333,6 +333,7 @@ pub struct AppUi {
     session_ready: bool,
     last_overlay_kind: OverlayKind,
     status_row_dirty: bool,
+    dirty: bool,
     restored: bool,
 }
 
@@ -375,6 +376,7 @@ impl AppUi {
             session_ready: false,
             last_overlay_kind: OverlayKind::None,
             status_row_dirty: false,
+            dirty: true,
             restored: false,
         })
     }
@@ -411,6 +413,7 @@ impl AppUi {
 
     pub fn set_connection_summary(&mut self, summary: String) {
         self.connection_summary = summary;
+        self.dirty = true;
     }
 
     pub fn set_status(&mut self, status: KernelStatus) {
@@ -421,11 +424,13 @@ impl AppUi {
         if status == KernelStatus::Disconnected {
             self.session_ready = false;
         }
+        self.dirty = true;
     }
 
     pub fn set_last_execution_count(&mut self, count: Option<u32>) {
         if let Some(count) = count {
             self.last_execution_count = Some(count);
+            self.dirty = true;
         }
     }
 
@@ -433,18 +438,29 @@ impl AppUi {
         self.status_spins()
     }
 
+    pub fn needs_redraw(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn request_redraw(&mut self) {
+        self.dirty = true;
+    }
+
     pub fn begin_input_request(&mut self, prompt: String, password: bool) {
         self.editor.begin_input_request(prompt, password);
         self.status = KernelStatus::AwaitingInput;
+        self.dirty = true;
     }
 
     pub fn clear_input_request(&mut self) {
         self.editor.clear_input_request();
+        self.dirty = true;
     }
 
     pub fn mark_session_ready(&mut self) {
         self.session_ready = true;
         self.status = KernelStatus::Idle;
+        self.dirty = true;
     }
 
     pub fn insert_transcript(&mut self, text: impl Into<String>) -> Result<()> {
@@ -457,6 +473,7 @@ impl AppUi {
         self.current_pane = new_pane;
         self.pane_top = new_pane.y;
         self.status_row_dirty = true;
+        self.dirty = true;
         Ok(())
     }
 
@@ -523,6 +540,7 @@ impl AppUi {
         terminal.invalidate_viewport();
         self.current_pane = pane;
         self.pane_top = pane.y;
+        self.dirty = true;
         Ok(())
     }
 
@@ -572,11 +590,6 @@ impl AppUi {
             CursorStyle::Block
         };
         terminal.set_cursor_style(cursor_style)?;
-        if input_active && overlay_kind == OverlayKind::None {
-            terminal.show_cursor()?;
-        } else {
-            terminal.hide_cursor()?;
-        }
 
         terminal.draw(|frame| {
             let area = frame.area();
@@ -701,6 +714,7 @@ impl AppUi {
             self.throbber_state.calc_next();
         }
         self.last_overlay_kind = overlay_kind;
+        self.dirty = false;
 
         Ok(())
     }
@@ -711,7 +725,9 @@ impl AppUi {
                 Event::Key(key)
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
-                    if let Some(action) = self.handle_key(key) {
+                    let action = self.handle_key(key);
+                    self.request_redraw();
+                    if let Some(action) = action {
                         return Ok(Some(action));
                     }
                     return Ok(None);
@@ -724,10 +740,12 @@ impl AppUi {
                     } else if self.editor_enabled() {
                         self.editor.on_paste(text);
                     }
+                    self.request_redraw();
                     return Ok(None);
                 }
                 Event::Resize(_, _) => {
                     self.sync_viewport()?;
+                    self.request_redraw();
                     return Ok(None);
                 }
                 _ => {}
@@ -1078,6 +1096,7 @@ impl AppUi {
             terminal.invalidate_viewport();
             self.current_pane = pane;
             self.pane_top = pane.y;
+            self.dirty = true;
         }
         Ok(())
     }
@@ -1142,6 +1161,7 @@ impl AppUi {
         self.clear_current_pane_rows()?;
         self.editor.reset();
         self.terminal_mut()?.invalidate_viewport();
+        self.dirty = true;
         Ok(())
     }
 

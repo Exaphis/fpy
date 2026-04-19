@@ -3,13 +3,85 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use tempfile::TempDir;
 use uuid::Uuid;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn idle_prompt_emits_no_redundant_terminal_output() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(reason) = missing_prerequisites(&repo_root) {
+        eprintln!("skipping tmux e2e test: {reason}");
+        return;
+    }
+
+    let unique = unique_id();
+    let session = format!("fpy-e2e-idle-{unique}");
+    let ansi_log = repo_root
+        .join("target")
+        .join(format!("tmux-e2e-idle-{unique}.ansi.log"));
+    let fpy_bin = option_env!("CARGO_BIN_EXE_fpy")
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| repo_root.join("target/debug/fpy"));
+    let python = repo_root.join(".venv/bin/python");
+    let python_bin = if python.exists() {
+        python
+    } else {
+        PathBuf::from("python3")
+    };
+
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", &session])
+        .status();
+
+    let status = Command::new("tmux")
+        .args(["new-session", "-d", "-s", &session, "-x", "120", "-y", "40", "zsh"])
+        .status()
+        .expect("start tmux session");
+    assert!(status.success(), "failed to start tmux session");
+
+    let pipe_command = format!("cat > '{}'", ansi_log.display());
+    let status = Command::new("tmux")
+        .args(["pipe-pane", "-t", &session, "-o", &pipe_command])
+        .status()
+        .expect("pipe tmux pane");
+    assert!(status.success(), "failed to pipe tmux pane");
+
+    let launch = format!("'{}' run --python '{}'", fpy_bin.display(), python_bin.display());
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", &session, &format!("cd '{}'", repo_root.display()), "Enter"])
+        .status()
+        .expect("send repo root");
+    assert!(status.success(), "failed to send repo root");
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", &session, &launch, "Enter"])
+        .status()
+        .expect("launch fpy");
+    assert!(status.success(), "failed to launch fpy");
+
+    wait_for_submit_ready(&session, Duration::from_secs(20));
+    wait_for_stable_file_size(&ansi_log, Duration::from_millis(300), Duration::from_secs(5));
+
+    let baseline = file_len(&ansi_log);
+    thread::sleep(Duration::from_millis(700));
+    let after_idle = file_len(&ansi_log);
+
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", &session])
+        .status();
+
+    assert_eq!(
+        after_idle, baseline,
+        "expected no additional terminal output while idle; baseline={baseline}, after_idle={after_idle}, ansi log={} ",
+        ansi_log.display()
+    );
+}
 
 #[test]
 fn ctrl_d_preserves_transcript() {
@@ -946,6 +1018,53 @@ fn write_history_record(
         ));
     }
     fs::write(path, contents).expect("write history record");
+}
+
+fn wait_for_submit_ready(session: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let output = Command::new("tmux")
+            .args(["capture-pane", "-pt", session, "-S", "-40"])
+            .output()
+            .expect("capture tmux pane");
+        let pane = String::from_utf8_lossy(&output.stdout);
+        let has_prompt = pane.contains("Ctrl-P palette");
+        let busy = pane.contains("Connecting to kernel...") || pane.contains("Kernel busy. Ctrl-C to interrupt");
+        if has_prompt && !busy {
+            return;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for submit-ready pane:\n{pane}");
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_for_stable_file_size(path: &Path, stable_for: Duration, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    let mut previous = file_len(path);
+    let mut stable_since = Instant::now();
+
+    loop {
+        thread::sleep(Duration::from_millis(50));
+        let current = file_len(path);
+        if current == previous {
+            if Instant::now().duration_since(stable_since) >= stable_for {
+                return;
+            }
+        } else {
+            previous = current;
+            stable_since = Instant::now();
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for stable ansi log at {}",
+            path.display()
+        );
+    }
+}
+
+fn file_len(path: &Path) -> u64 {
+    fs::metadata(path).map(|metadata| metadata.len()).unwrap_or(0)
 }
 
 fn missing_prerequisites(repo_root: &Path) -> Option<String> {

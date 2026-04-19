@@ -164,18 +164,27 @@ where
 
     pub fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
         let position = position.into();
+        if self.last_known_cursor_pos == position {
+            return Ok(());
+        }
         self.backend.set_cursor_position(position)?;
         self.last_known_cursor_pos = position;
         Ok(())
     }
 
     pub fn show_cursor(&mut self) -> io::Result<()> {
+        if !self.hidden_cursor {
+            return Ok(());
+        }
         self.backend.show_cursor()?;
         self.hidden_cursor = false;
         Ok(())
     }
 
     pub fn hide_cursor(&mut self) -> io::Result<()> {
+        if self.hidden_cursor {
+            return Ok(());
+        }
         self.backend.hide_cursor()?;
         self.hidden_cursor = true;
         Ok(())
@@ -235,13 +244,23 @@ enum DrawCommand {
     ClearToEnd { x: u16, y: u16, bg: Color },
 }
 
-fn diff_buffers(_previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
+fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
     let mut updates = Vec::new();
+    let row_width = next.area.width as usize;
+    let comparable_previous = previous.area == next.area;
 
     for y in 0..next.area.height {
-        let row_start = y as usize * next.area.width as usize;
-        let row_end = row_start + next.area.width as usize;
+        let row_start = y as usize * row_width;
+        let row_end = row_start + row_width;
         let row = &next.content[row_start..row_end];
+
+        if comparable_previous {
+            let previous_row = &previous.content[row_start..row_end];
+            if previous_row == row {
+                continue;
+            }
+        }
+
         let bg = row.last().map(|cell| cell.bg).unwrap_or(Color::Reset);
 
         let mut last_nonblank_column = None;
@@ -492,6 +511,37 @@ mod tests {
                 }
             )),
             "expected a clear after the last visible cell, got {updates:#?}"
+        );
+    }
+
+    #[test]
+    fn unchanged_rows_emit_no_updates() {
+        let area = Rect::new(0, 0, 6, 2);
+        let mut previous = Buffer::empty(area);
+        previous.set_string(0, 0, "hello", Style::default());
+        previous.set_string(0, 1, "world", Style::default());
+        let next = previous.clone();
+
+        let updates = diff_buffers(&previous, &next);
+        assert!(updates.is_empty(), "expected no updates, got {updates:#?}");
+    }
+
+    #[test]
+    fn unchanged_rows_are_skipped_when_other_rows_change() {
+        let area = Rect::new(0, 0, 6, 2);
+        let mut previous = Buffer::empty(area);
+        previous.set_string(0, 0, "hello", Style::default());
+        previous.set_string(0, 1, "world", Style::default());
+
+        let mut next = previous.clone();
+        next.set_string(0, 0, "hullo", Style::default());
+
+        let updates = diff_buffers(&previous, &next);
+        assert!(
+            updates.iter().all(|command| match command {
+                DrawCommand::Put { y, .. } | DrawCommand::ClearToEnd { y, .. } => *y == 0,
+            }),
+            "expected updates only for the changed row, got {updates:#?}"
         );
     }
 
