@@ -2,7 +2,7 @@ use std::io;
 use std::io::Stdout;
 use std::io::Write;
 
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{MoveTo, SetCursorStyle as CrosstermCursorStyle};
 use crossterm::queue;
 use crossterm::style::Colors;
 use crossterm::style::Print;
@@ -25,6 +25,13 @@ use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
 pub type DefaultTerminal = Terminal<CrosstermBackend<Stdout>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorStyle {
+    Default,
+    Block,
+    Bar,
+}
 
 pub struct Frame<'a> {
     cursor_position: Option<Position>,
@@ -69,6 +76,7 @@ where
     viewport_area: Rect,
     last_known_screen_size: Size,
     last_known_cursor_pos: Position,
+    cursor_style: Option<CursorStyle>,
 }
 
 impl<B> Drop for Terminal<B>
@@ -76,6 +84,7 @@ where
     B: Backend<Error = io::Error> + Write,
 {
     fn drop(&mut self) {
+        let _ = self.set_cursor_style(CursorStyle::Default);
         let _ = self.show_cursor();
     }
 }
@@ -98,6 +107,7 @@ where
             viewport_area,
             last_known_screen_size: screen_size,
             last_known_cursor_pos: cursor_pos,
+            cursor_style: None,
         })
     }
 
@@ -168,6 +178,16 @@ where
     pub fn hide_cursor(&mut self) -> io::Result<()> {
         self.backend.hide_cursor()?;
         self.hidden_cursor = true;
+        Ok(())
+    }
+
+    pub fn set_cursor_style(&mut self, style: CursorStyle) -> io::Result<()> {
+        if self.cursor_style == Some(style) {
+            return Ok(());
+        }
+
+        queue!(self.backend, to_crossterm_cursor_style(style))?;
+        self.cursor_style = Some(style);
         Ok(())
     }
 
@@ -389,6 +409,14 @@ impl ModifierDiff {
 
 fn display_width(text: &str) -> usize {
     text.width().max(1)
+}
+
+fn to_crossterm_cursor_style(style: CursorStyle) -> CrosstermCursorStyle {
+    match style {
+        CursorStyle::Default => CrosstermCursorStyle::DefaultUserShape,
+        CursorStyle::Block => CrosstermCursorStyle::SteadyBlock,
+        CursorStyle::Bar => CrosstermCursorStyle::SteadyBar,
+    }
 }
 
 fn to_crossterm_color(color: Color) -> crossterm::style::Color {

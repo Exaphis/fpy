@@ -3,7 +3,7 @@ use edtui::{
     actions::{MoveDown, MoveUp},
 };
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -111,7 +111,7 @@ pub(super) fn editor_gutter_lines(
 pub(super) fn editor_theme() -> EditorTheme<'static> {
     EditorTheme::default()
         .base(Style::default())
-        .cursor_style(Style::default().add_modifier(Modifier::REVERSED))
+        .hide_cursor()
         .selection_style(Style::default().bg(Color::DarkGray))
         .hide_status_line()
 }

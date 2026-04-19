@@ -4,7 +4,7 @@ mod transcript;
 
 use anyhow::Result;
 use crossterm::{
-    cursor::{MoveTo, MoveToColumn, Show},
+    cursor::{MoveTo, MoveToColumn, SetCursorStyle, Show},
     event::{
         DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
         KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
@@ -51,7 +51,7 @@ use self::{
     },
     transcript::{highlighted_execute_input, runtime_line},
 };
-use crate::custom_terminal::DefaultTerminal;
+use crate::custom_terminal::{CursorStyle, DefaultTerminal};
 use crate::history::{HistoryEntry, HistoryOutcome};
 use crate::insert_history::insert_history_text;
 use crate::kernel::KernelStatus;
@@ -464,13 +464,14 @@ impl AppUi {
 
         let pane = self.pane_rect()?;
         if let Some(mut terminal) = self.terminal.take() {
+            let _ = terminal.set_cursor_style(CursorStyle::Default);
             let _ = terminal.show_cursor();
         }
 
         let mut handle = stdout();
         let _ = execute!(handle, DisableBracketedPaste, PopKeyboardEnhancementFlags);
         write!(handle, "\x1b[r\x1b[0m")?;
-        execute!(handle, Show, ResetColor, EnableLineWrap)?;
+        execute!(handle, Show, SetCursorStyle::DefaultUserShape, ResetColor, EnableLineWrap)?;
         for row in pane.y..pane.bottom() {
             execute!(
                 handle,
@@ -485,7 +486,14 @@ impl AppUi {
         )?;
         handle.flush()?;
         disable_raw_mode()?;
-        execute!(handle, ResetColor, EnableLineWrap, Show, MoveToColumn(0))?;
+        execute!(
+            handle,
+            ResetColor,
+            EnableLineWrap,
+            Show,
+            SetCursorStyle::DefaultUserShape,
+            MoveToColumn(0)
+        )?;
         handle.flush()?;
         self.restored = true;
         Ok(())
@@ -543,6 +551,16 @@ impl AppUi {
         let terminal = terminal
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("terminal is not active"))?;
+        let cursor_style = if input_active && overlay_kind == OverlayKind::None {
+            if editor.mode() == EditorMode::Insert {
+                CursorStyle::Bar
+            } else {
+                CursorStyle::Block
+            }
+        } else {
+            CursorStyle::Block
+        };
+        terminal.set_cursor_style(cursor_style)?;
         if input_active && overlay_kind == OverlayKind::None {
             terminal.show_cursor()?;
         } else {
