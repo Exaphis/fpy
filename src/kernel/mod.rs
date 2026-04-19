@@ -3,6 +3,7 @@ mod messages;
 mod runtime;
 
 use std::{
+    ffi::OsString,
     path::PathBuf,
     process::Stdio,
     time::{Duration, Instant},
@@ -220,6 +221,9 @@ async fn spawn_kernel(launch: &LaunchConfig) -> Result<LocalKernel> {
                 .context("failed to open kernel startup log")?,
         ))
         .kill_on_drop(true);
+    if let Some(value) = default_pydevd_disable_file_validation_env() {
+        command.env("PYDEVD_DISABLE_FILE_VALIDATION", value);
+    }
 
     let child = command
         .spawn()
@@ -270,6 +274,10 @@ async fn wait_for_connection(local: &mut LocalKernel) -> Result<ConnectionFile> 
     }
 }
 
+fn default_pydevd_disable_file_validation_env() -> Option<OsString> {
+    std::env::var_os("PYDEVD_DISABLE_FILE_VALIDATION").is_none().then_some(OsString::from("1"))
+}
+
 fn send_sigint(pid: Option<u32>) -> Result<()> {
     let pid = pid.ok_or_else(|| anyhow!("kernel process has no pid"))?;
 
@@ -291,13 +299,31 @@ fn send_sigint(pid: Option<u32>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{ffi::OsString, path::PathBuf};
 
     use serde_json::json;
     use tempfile::{NamedTempFile, TempDir};
 
-    use super::{LaunchConfig, LocalKernel, local_exit_message};
+    use super::{
+        LaunchConfig, LocalKernel, default_pydevd_disable_file_validation_env,
+        local_exit_message,
+    };
     use crate::kernel::{diagnostics::append_startup_context, messages::pick_text_payload};
+
+    #[test]
+    fn defaults_pydevd_file_validation_to_disabled() {
+        let _guard = EnvVarGuard::remove("PYDEVD_DISABLE_FILE_VALIDATION");
+        assert_eq!(
+            default_pydevd_disable_file_validation_env().as_deref(),
+            Some(std::ffi::OsStr::new("1"))
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_pydevd_file_validation_setting() {
+        let _guard = EnvVarGuard::set("PYDEVD_DISABLE_FILE_VALIDATION", "0");
+        assert_eq!(default_pydevd_disable_file_validation_env(), None);
+    }
 
     #[test]
     fn prefers_plain_text_payloads() {
@@ -367,5 +393,41 @@ mod tests {
         assert!(message.contains("Kernel exited unexpectedly"));
         assert!(message.contains("Status:"));
         assert!(message.contains("Segmentation fault: 11"));
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, previous }
+        }
+
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(value) => unsafe {
+                    std::env::set_var(self.key, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.key);
+                },
+            }
+        }
     }
 }
