@@ -215,9 +215,8 @@ enum DrawCommand {
     ClearToEnd { x: u16, y: u16, bg: Color },
 }
 
-fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
+fn diff_buffers(_previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
     let mut updates = Vec::new();
-    let mut last_nonblank_columns = vec![0; next.area.height as usize];
 
     for y in 0..next.area.height {
         let row_start = y as usize * next.area.width as usize;
@@ -236,37 +235,31 @@ fn diff_buffers(previous: &Buffer, next: &Buffer) -> Vec<DrawCommand> {
             column += width.max(1);
         }
 
-        let clear_start = last_nonblank_column.map_or(0usize, |column| column + 1);
-        if clear_start < row.len() {
-            let x = next.area.x + clear_start as u16;
-            let y = next.area.y + y;
-            updates.push(DrawCommand::ClearToEnd { x, y, bg });
-        }
-
-        last_nonblank_columns[y as usize] = last_nonblank_column.unwrap_or(0) as u16;
-    }
-
-    let mut invalidated = 0usize;
-    let mut to_skip = 0usize;
-    for (index, (current, previous)) in next.content.iter().zip(previous.content.iter()).enumerate()
-    {
-        if !current.skip && (current != previous || invalidated > 0) && to_skip == 0 {
-            let width = next.area.width as usize;
-            let x = next.area.x + (index % width) as u16;
-            let y = next.area.y + (index / width) as u16;
-            let row = index / width;
-            if (index % width) as u16 <= last_nonblank_columns[row] {
-                updates.push(DrawCommand::Put {
-                    x,
-                    y,
-                    cell: current.clone(),
-                });
+        let y = next.area.y + y;
+        if let Some(last_nonblank_column) = last_nonblank_column {
+            let mut column = 0usize;
+            while column <= last_nonblank_column {
+                let cell = &row[column];
+                let width = display_width(cell.symbol()).max(1);
+                if !cell.skip {
+                    updates.push(DrawCommand::Put {
+                        x: next.area.x + column as u16,
+                        y,
+                        cell: cell.clone(),
+                    });
+                }
+                column += width;
             }
         }
 
-        to_skip = display_width(current.symbol()).saturating_sub(1);
-        let affected_width = display_width(current.symbol()).max(display_width(previous.symbol()));
-        invalidated = affected_width.max(invalidated).saturating_sub(1);
+        let clear_start = last_nonblank_column.map_or(0usize, |column| column + 1);
+        if clear_start < row.len() {
+            updates.push(DrawCommand::ClearToEnd {
+                x: next.area.x + clear_start as u16,
+                y,
+                bg,
+            });
+        }
     }
 
     updates
@@ -279,7 +272,6 @@ where
     let mut fg = Color::Reset;
     let mut bg = Color::Reset;
     let mut modifier = Modifier::empty();
-    let mut last_pos: Option<Position> = None;
 
     for command in commands {
         let (x, y) = match &command {
@@ -287,10 +279,7 @@ where
             DrawCommand::ClearToEnd { x, y, .. } => (*x, *y),
         };
 
-        if !matches!(last_pos, Some(pos) if pos.x + 1 == x && pos.y == y) {
-            queue!(writer, MoveTo(x, y))?;
-        }
-        last_pos = Some(Position { x, y });
+        queue!(writer, MoveTo(x, y))?;
 
         match command {
             DrawCommand::Put { cell, .. } => {
@@ -432,8 +421,8 @@ mod tests {
     use ratatui::{
         buffer::Buffer,
         layout::Rect,
-        style::Style,
         style::Color,
+        style::Style,
     };
 
     #[test]
@@ -476,5 +465,59 @@ mod tests {
             )),
             "expected a clear after the last visible cell, got {updates:#?}"
         );
+    }
+
+    #[test]
+    fn diff_reconstructs_rows_after_query_relayout() {
+        let area = Rect::new(0, 0, 40, 5);
+        let mut previous = Buffer::empty(area);
+        previous.set_string(0, 0, "query:", Style::default());
+        previous.set_string(0, 1, "> 1+1", Style::default());
+        previous.set_string(0, 2, "  import pdb; pdb.set_trace();", Style::default());
+        previous.set_string(0, 3, "  def fibonacci(n): ...", Style::default());
+        previous.set_string(0, 4, "preview", Style::default());
+
+        let mut next = Buffer::empty(area);
+        next.set_string(0, 0, "query: def fib", Style::default());
+        next.set_string(0, 1, "> def fibonacci(n): ...", Style::default());
+        next.set_string(0, 2, "  def fibonacci(n): ...", Style::default());
+        next.set_string(0, 3, "preview", Style::default());
+        next.set_string(0, 4, "def fibonacci(n):", Style::default());
+
+        let updates = diff_buffers(&previous, &next);
+        let rendered = apply_text_commands(&previous, area, &updates);
+        assert_eq!(rendered, buffer_text(&next));
+    }
+
+    fn apply_text_commands(previous: &Buffer, area: Rect, commands: &[DrawCommand]) -> Vec<String> {
+        let mut rendered = buffer_text(previous);
+        for command in commands {
+            match command {
+                DrawCommand::Put { x, y, cell } => {
+                    rendered[y.saturating_sub(area.y) as usize]
+                        .replace_range(x.saturating_sub(area.x) as usize..x.saturating_sub(area.x) as usize + 1, cell.symbol());
+                }
+                DrawCommand::ClearToEnd { x, y, .. } => {
+                    let row = &mut rendered[y.saturating_sub(area.y) as usize];
+                    for column in x.saturating_sub(area.x) as usize..area.width as usize {
+                        row.replace_range(column..column + 1, " ");
+                    }
+                }
+            }
+        }
+        rendered
+    }
+
+    fn buffer_text(buffer: &Buffer) -> Vec<String> {
+        (0..buffer.area.height)
+            .map(|row| {
+                let start = row as usize * buffer.area.width as usize;
+                let end = start + buffer.area.width as usize;
+                buffer.content[start..end]
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+            })
+            .collect()
     }
 }

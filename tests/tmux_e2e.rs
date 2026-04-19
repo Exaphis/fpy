@@ -529,6 +529,60 @@ fn history_search_matches_multiline_cells_and_loads_previewed_code() {
 }
 
 #[test]
+fn history_search_query_relayout_does_not_mix_stale_rows() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "def fibonacci(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a",
+        Some(10_300_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "def fibonacci(n):\n    if n < 2:\n        return n\n    return fibonacci(n - 1) + fibonacci(n - 2)",
+        Some(9_420_000),
+        None,
+    );
+    for duration_ns in [20_100_000_000, 220_100_000_000, 720_100_000_000, 20_000_000_000] {
+        write_history_record(
+            history_dir.path(),
+            "import pdb; pdb.set_trace(); print(\"after\")",
+            Some(duration_ns),
+            None,
+        );
+    }
+
+    let Some(output) = run_repro(
+        "history-search-relayout-clean",
+        "history-search-open",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "def fib"),
+            ("TMUX_SIZE", "120x25"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "History Search");
+    assert_contains(&output.after, "query: def fib");
+    assert_contains(&output.after, "> def fibonacci(n): …");
+    assert_contains(&output.after, "  def fibonacci(n): …");
+    assert_contains(&output.after, "preview");
+    assert!(
+        output.after.contains("    a, b = 0, 1") || output.after.contains("    if n < 2:"),
+        "expected a clean multiline preview in output:\n{}",
+        output.after
+    );
+    assert_not_contains(&output.after, "previewt");
+    assert_not_contains(&output.after, "defofibonacci");
+}
+
+#[test]
 fn persistent_history_is_available_in_new_sessions() {
     let history_dir = TempDir::new().expect("history dir");
     let history_dir_path = history_dir.path().display().to_string();
