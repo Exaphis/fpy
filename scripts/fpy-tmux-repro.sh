@@ -400,6 +400,36 @@ case "$ACTION" in
     fi
     tmux send-keys -t "$SESSION" Enter
     ;;
+  history-search-load-ctrl-k)
+    wait_for_usable_input "$SESSION"
+    tmux send-keys -t "$SESSION" C-r
+    sleep 0.1
+    if [ -n "$SEARCH_QUERY" ]; then
+      tmux send-keys -t "$SESSION" -l "$SEARCH_QUERY"
+      wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
+    fi
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.1
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 37 -H 3b -H 35 -H 75
+    tmux send-keys -t "$SESSION" Enter
+    wait_for_submit_ready "$SESSION"
+    ;;
+  history-search-load-ctrl-k-ctrl-j)
+    wait_for_usable_input "$SESSION"
+    tmux send-keys -t "$SESSION" C-r
+    sleep 0.1
+    if [ -n "$SEARCH_QUERY" ]; then
+      tmux send-keys -t "$SESSION" -l "$SEARCH_QUERY"
+      wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
+    fi
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.1
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 37 -H 3b -H 35 -H 75
+    sleep 0.1
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 36 -H 3b -H 35 -H 75
+    tmux send-keys -t "$SESSION" Enter
+    wait_for_submit_ready "$SESSION"
+    ;;
   ctrl-d)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-d

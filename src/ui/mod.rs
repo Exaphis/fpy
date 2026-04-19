@@ -214,8 +214,19 @@ impl EditorController {
         self.history_index = None;
     }
 
+    fn select_history(&mut self, index: usize) {
+        if let Some(text) = self.history.get(index).cloned() {
+            self.history_index = Some(index);
+            self.set_text(&text);
+        }
+    }
+
     fn has_history(&self) -> bool {
         !self.history.is_empty()
+    }
+
+    fn history_position(&self) -> Option<(usize, usize)> {
+        self.history_index.map(|index| (index + 1, self.history.len()))
     }
 
     fn on_paste(&mut self, text: String) {
@@ -613,8 +624,13 @@ impl AppUi {
                 if overlay_kind == OverlayKind::HistorySearch {
                     render_history_search_status(frame, status_area);
                 } else if let Some(throbber) = status_throbber(status) {
-                    let status_detail = status_label(awaiting_input.as_ref(), &prompt_label);
-                    let prefix_width = editor_status_prefix_width(editor.mode(), status_detail);
+                    let status_detail = status_label(
+                        awaiting_input.as_ref(),
+                        &prompt_label,
+                        editor.history_position(),
+                    );
+                    let prefix_width =
+                        editor_status_prefix_width(editor.mode(), status_detail.as_deref());
                     let transient_width = transient_status
                         .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
                         .unwrap_or(0);
@@ -630,7 +646,7 @@ impl AppUi {
                         ])
                         .areas(status_area);
                     frame.render_widget(
-                        editor_status_prefix(editor.mode(), status_detail),
+                        editor_status_prefix(editor.mode(), status_detail.as_deref()),
                         status_text_area,
                     );
                     frame.render_widget(Paragraph::new(" "), spinner_gap_area);
@@ -647,8 +663,13 @@ impl AppUi {
                     frame.render_widget(Paragraph::new(""), filler_area);
                     frame.render_widget(editor_palette_hint(), palette_hint_area);
                 } else {
-                    let status_detail = status_label(awaiting_input.as_ref(), &prompt_label);
-                    let prefix_width = editor_status_prefix_width(editor.mode(), status_detail);
+                    let status_detail = status_label(
+                        awaiting_input.as_ref(),
+                        &prompt_label,
+                        editor.history_position(),
+                    );
+                    let prefix_width =
+                        editor_status_prefix_width(editor.mode(), status_detail.as_deref());
                     let palette_hint_width = editor_palette_hint_width();
                     let [status_text_area, filler_area, palette_hint_area] = Layout::horizontal([
                         Constraint::Length(prefix_width),
@@ -657,7 +678,7 @@ impl AppUi {
                     ])
                     .areas(status_area);
                     frame.render_widget(
-                        editor_status_prefix(editor.mode(), status_detail),
+                        editor_status_prefix(editor.mode(), status_detail.as_deref()),
                         status_text_area,
                     );
                     frame.render_widget(Paragraph::new(""), filler_area);
@@ -786,7 +807,6 @@ impl AppUi {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL)
                 && self.editor_enabled()
-                && self.editor.is_single_line()
                 && self.editor.has_history() =>
             {
                 self.editor.history_up();
@@ -798,7 +818,6 @@ impl AppUi {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL)
                 && self.editor_enabled()
-                && self.editor.is_single_line()
                 && self.editor.has_history() =>
             {
                 self.editor.history_down();
@@ -892,9 +911,8 @@ impl AppUi {
                     .history_search
                     .results
                     .get(self.history_search.selected)
-                    && let Some(entry) = self.history_entries.get(entry_index)
                 {
-                    self.editor.set_text(&entry.code);
+                    self.editor.select_history(entry_index);
                 }
                 self.history_search.open = false;
                 None

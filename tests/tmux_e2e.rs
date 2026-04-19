@@ -560,6 +560,74 @@ fn history_search_matches_multiline_cells_and_loads_previewed_code() {
 }
 
 #[test]
+fn history_search_load_seeds_ctrl_k_history_navigation_for_multiline_cells() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "alpha = 1\nalpha",
+        Some(1_000_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "beta = 2\nbeta",
+        Some(2_000_000),
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "history-search-load-ctrl-k",
+        "history-search-load-ctrl-k",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "beta"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: alpha = 1");
+    assert_contains(&output.after, "Out[1]: 1");
+}
+
+#[test]
+fn history_search_load_seeds_ctrl_j_back_to_loaded_multiline_cell() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "alpha = 1\nalpha",
+        Some(1_000_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "beta = 2\nbeta",
+        Some(2_000_000),
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "history-search-load-ctrl-k-ctrl-j",
+        "history-search-load-ctrl-k-ctrl-j",
+        &[
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            ("SEARCH_QUERY", "beta"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: beta = 2");
+    assert_contains(&output.after, "Out[1]: 2");
+}
+
+#[test]
 fn history_search_query_relayout_does_not_mix_stale_rows() {
     let history_dir = TempDir::new().expect("history dir");
     write_history_record(

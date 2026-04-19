@@ -162,15 +162,19 @@ pub(super) fn editor_status_prefix_width(mode: EditorMode, detail: Option<&str>)
     u16::try_from(width).unwrap_or(u16::MAX)
 }
 
-pub(super) fn status_label<'a>(
-    awaiting_input: Option<&'a PendingStdin>,
-    prompt_label: &'a str,
-) -> Option<&'a str> {
+pub(super) fn status_label(
+    awaiting_input: Option<&PendingStdin>,
+    prompt_label: &str,
+    history_position: Option<(usize, usize)>,
+) -> Option<String> {
     if awaiting_input.is_some() {
-        None
-    } else {
-        Some(prompt_label)
+        return None;
     }
+
+    Some(match history_position {
+        Some((current, total)) => format!("{prompt_label} [{current}/{total}]"),
+        None => prompt_label.to_string(),
+    })
 }
 
 pub(super) fn indent_width() -> usize {
@@ -303,12 +307,20 @@ mod tests {
     #[test]
     fn hides_stdin_label_in_status_bar() {
         let stdin = PendingStdin::new("input".to_string(), false);
-        assert_eq!(status_label(Some(&stdin), "In [3]"), None);
+        assert_eq!(status_label(Some(&stdin), "In [3]", None), None);
     }
 
     #[test]
     fn uses_prompt_label_in_status_bar() {
-        assert_eq!(status_label(None, "In [3]"), Some("In [3]"));
+        assert_eq!(status_label(None, "In [3]", None), Some("In [3]".to_string()));
+    }
+
+    #[test]
+    fn appends_history_position_in_status_bar() {
+        assert_eq!(
+            status_label(None, "In [3]", Some((2, 10))),
+            Some("In [3] [2/10]".to_string())
+        );
     }
 
     #[test]
