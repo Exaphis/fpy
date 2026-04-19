@@ -6,6 +6,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -72,13 +75,19 @@ impl HistorySession {
 
     fn open_with(root: &Path, host: String, pid: u32) -> Result<Self> {
         let host_dir = root.join(&host);
-        fs::create_dir_all(&host_dir)
-            .with_context(|| format!("failed to create history directory {}", host_dir.display()))?;
+        fs::create_dir_all(&host_dir).with_context(|| {
+            format!("failed to create history directory {}", host_dir.display())
+        })?;
+        ensure_private_history_dir(root)
+            .with_context(|| format!("failed to secure history root {}", root.display()))?;
+        ensure_private_history_dir(&host_dir).with_context(|| {
+            format!("failed to secure history directory {}", host_dir.display())
+        })?;
 
         for _ in 0..16 {
             let session_id = Uuid::now_v7();
             let path = host_dir.join(format!("{session_id}-{pid}.jsonl"));
-            match OpenOptions::new().create_new(true).append(true).open(&path) {
+            match open_private_history_file(&path) {
                 Ok(file) => {
                     return Ok(Self {
                         path,
@@ -91,8 +100,9 @@ impl HistorySession {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => {
-                    return Err(error)
-                        .with_context(|| format!("failed to open history file {}", path.display()));
+                    return Err(error).with_context(|| {
+                        format!("failed to open history file {}", path.display())
+                    });
                 }
             }
         }
@@ -137,11 +147,18 @@ impl HistorySession {
     }
 
     fn append_record(&mut self, record: &HistoryRecord) -> Result<()> {
-        serde_json::to_writer(&mut self.writer, record)
-            .with_context(|| format!("failed to serialize history record to {}", self.path.display()))?;
-        self.writer
-            .write_all(b"\n")
-            .with_context(|| format!("failed to append history newline to {}", self.path.display()))?;
+        serde_json::to_writer(&mut self.writer, record).with_context(|| {
+            format!(
+                "failed to serialize history record to {}",
+                self.path.display()
+            )
+        })?;
+        self.writer.write_all(b"\n").with_context(|| {
+            format!(
+                "failed to append history newline to {}",
+                self.path.display()
+            )
+        })?;
         self.writer
             .flush()
             .with_context(|| format!("failed to flush history file {}", self.path.display()))?;
@@ -167,6 +184,8 @@ pub fn load_entries(root: &Path) -> Result<Vec<HistoryEntry>> {
         return Ok(Vec::new());
     }
 
+    repair_history_permissions(root)?;
+
     let mut cells = Vec::new();
     let mut cell_indexes = HashMap::<(Uuid, u64), usize>::new();
     let mut pending_done = HashMap::<(Uuid, u64), (u64, HistoryOutcome)>::new();
@@ -186,9 +205,19 @@ pub fn load_entries(root: &Path) -> Result<Vec<HistoryEntry>> {
         }
 
         let mut files = fs::read_dir(host_dir.path())
-            .with_context(|| format!("failed to read history host dir {}", host_dir.path().display()))?
+            .with_context(|| {
+                format!(
+                    "failed to read history host dir {}",
+                    host_dir.path().display()
+                )
+            })?
             .collect::<std::io::Result<Vec<_>>>()
-            .with_context(|| format!("failed to enumerate history host dir {}", host_dir.path().display()))?;
+            .with_context(|| {
+                format!(
+                    "failed to enumerate history host dir {}",
+                    host_dir.path().display()
+                )
+            })?;
         files.sort_by_key(|entry| entry.path());
 
         for file in files {
@@ -256,6 +285,97 @@ pub fn load_entries(root: &Path) -> Result<Vec<HistoryEntry>> {
     Ok(cells)
 }
 
+#[cfg(unix)]
+fn ensure_private_history_dir(path: &Path) -> std::io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn ensure_private_history_dir(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_private_history_file(path: &Path) -> std::io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn ensure_private_history_file(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn repair_history_permissions(root: &Path) -> Result<()> {
+    ensure_private_history_dir(root)
+        .with_context(|| format!("failed to secure history root {}", root.display()))?;
+
+    let host_dirs = fs::read_dir(root)
+        .with_context(|| format!("failed to read history root {}", root.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("failed to enumerate history root {}", root.display()))?;
+
+    for host_dir in host_dirs {
+        let host_path = host_dir.path();
+        let file_type = host_dir
+            .file_type()
+            .with_context(|| format!("failed to read file type for {}", host_path.display()))?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        ensure_private_history_dir(&host_path).with_context(|| {
+            format!("failed to secure history directory {}", host_path.display())
+        })?;
+
+        let files = fs::read_dir(&host_path)
+            .with_context(|| format!("failed to read history host dir {}", host_path.display()))?
+            .collect::<std::io::Result<Vec<_>>>()
+            .with_context(|| {
+                format!(
+                    "failed to enumerate history host dir {}",
+                    host_path.display()
+                )
+            })?;
+
+        for file in files {
+            let path = file.path();
+            let file_type = file
+                .file_type()
+                .with_context(|| format!("failed to read file type for {}", path.display()))?;
+            if !file_type.is_file()
+                || path.extension().and_then(|ext| ext.to_str()) != Some("jsonl")
+            {
+                continue;
+            }
+
+            ensure_private_history_file(&path)
+                .with_context(|| format!("failed to secure history file {}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn repair_history_permissions(_root: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_private_history_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new()
+        .create_new(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_private_history_file(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().create_new(true).append(true).open(path)
+}
+
 fn read_records(path: &Path) -> Result<Vec<HistoryRecord>> {
     let contents = fs::read_to_string(path)
         .with_context(|| format!("failed to read history file {}", path.display()))?;
@@ -299,7 +419,10 @@ fn current_host_name() -> String {
     let mut buffer = [0u8; 256];
     let result = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
     if result == 0 {
-        let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len());
+        let length = buffer
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(buffer.len());
         if length > 0 {
             return sanitize_host_name(&String::from_utf8_lossy(&buffer[..length]));
         }
@@ -328,12 +451,13 @@ fn sanitize_host_name(name: &str) -> String {
 mod tests {
     use std::{path::Path, time::Duration};
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::TempDir;
     use uuid::Uuid;
 
-    use super::{
-        HistoryOutcome, HistorySession, load_entries, read_records, sanitize_host_name,
-    };
+    use super::{HistoryOutcome, HistorySession, load_entries, read_records, sanitize_host_name};
 
     #[test]
     fn writes_session_history_under_host_directory() {
@@ -352,13 +476,101 @@ mod tests {
             .expect("session file under root")
             .to_path_buf();
         assert_eq!(relative.parent().unwrap(), Path::new("test-host"));
-        assert!(relative
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with("-42.jsonl")));
+        assert!(
+            relative
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("-42.jsonl"))
+        );
 
         let records = read_records(session.path()).expect("read session records");
         assert_eq!(records.len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_private_history_files_and_directories() {
+        let root = TempDir::new().expect("history root");
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("relax root permissions");
+
+        let session = HistorySession::open_with(root.path(), "test-host".to_string(), 42)
+            .expect("open history session");
+
+        let file_mode = session
+            .path()
+            .metadata()
+            .expect("file metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600);
+
+        let host_dir = session.path().parent().expect("host dir");
+        let dir_mode = host_dir
+            .metadata()
+            .expect("dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+
+        let root_mode = root
+            .path()
+            .metadata()
+            .expect("root metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(root_mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_entries_repairs_existing_history_permissions() {
+        let root = TempDir::new().expect("history root");
+        let host_dir = root.path().join("host-a");
+        std::fs::create_dir_all(&host_dir).expect("host dir");
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("relax root permissions");
+        std::fs::set_permissions(&host_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("relax host permissions");
+
+        let session_id = Uuid::now_v7();
+        let path = host_dir.join(format!("{session_id}-7.jsonl"));
+        std::fs::write(
+            &path,
+            format!(
+                "{{\"v\":1,\"type\":\"cell\",\"session_id\":\"{}\",\"entry_seq\":1,\"ts_unix_ns\":10,\"host\":\"host-a\",\"pid\":7,\"code\":\"1+1\"}}\n",
+                session_id,
+            ),
+        )
+        .expect("write history");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("relax file permissions");
+
+        let entries = load_entries(root.path()).expect("load entries");
+        assert_eq!(entries.len(), 1);
+
+        let root_mode = root
+            .path()
+            .metadata()
+            .expect("root metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(root_mode, 0o700);
+
+        let dir_mode = host_dir
+            .metadata()
+            .expect("dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(dir_mode, 0o700);
+
+        let file_mode = path.metadata().expect("file metadata").permissions().mode() & 0o777;
+        assert_eq!(file_mode, 0o600);
     }
 
     #[test]
