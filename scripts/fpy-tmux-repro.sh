@@ -187,6 +187,22 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" Up Enter
     wait_for_submit_ready "$SESSION"
     ;;
+  history-ctrl-k)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 37 -H 3b -H 35 -H 75
+    tmux send-keys -t "$SESSION" Enter
+    wait_for_submit_ready "$SESSION"
+    ;;
+  history-ctrl-k-ctrl-j)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 37 -H 3b -H 35 -H 75
+    sleep 0.1
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 36 -H 3b -H 35 -H 75
+    sleep 0.1
+    tmux send-keys -t "$SESSION" -l "3+3"
+    tmux send-keys -t "$SESSION" Enter
+    wait_for_submit_ready "$SESSION"
+    ;;
   vim-goto)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "a"

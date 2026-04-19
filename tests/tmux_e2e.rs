@@ -352,6 +352,37 @@ fn history_up_reruns_previous_cell() {
 }
 
 #[test]
+fn ctrl_k_reruns_previous_history_cell() {
+    let Some(output) = run_repro(
+        "history-ctrl-k",
+        "history-ctrl-k",
+        &[("PRE_INPUT", "1+1\n2+2"), ("INPUTS", "1+1\n2+2"), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [2]: 2+2");
+    assert_contains(&output.after, "Out[2]: 4");
+    assert_contains(&output.after, "In [3]: 2+2");
+    assert_contains(&output.after, "Out[3]: 4");
+}
+
+#[test]
+fn ctrl_j_moves_back_down_from_history_to_blank_input() {
+    let Some(output) = run_repro(
+        "history-ctrl-k-ctrl-j",
+        "history-ctrl-k-ctrl-j",
+        &[("PRE_INPUT", "1+1\n2+2"), ("INPUTS", "1+1\n2+2"), ("EXIT_WAIT", "1")],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [3]: 3+3");
+    assert_contains(&output.after, "Out[3]: 6");
+    assert_not_contains(&output.after, "In [3]: 2+2");
+}
+
+#[test]
 fn history_search_shows_multiple_results_and_multiline_preview() {
     let history_dir = TempDir::new().expect("history dir");
     write_history_record(

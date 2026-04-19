@@ -781,6 +781,30 @@ impl AppUi {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) => Some(UiAction::ClearScreen),
             KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL)
+                && self.editor_enabled()
+                && self.editor.is_single_line()
+                && self.editor.has_history() =>
+            {
+                self.editor.history_up();
+                None
+            }
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL)
+                && self.editor_enabled()
+                && self.editor.is_single_line()
+                && self.editor.has_history() =>
+            {
+                self.editor.history_down();
+                None
+            }
+            KeyEvent {
                 code: KeyCode::Tab, ..
             } if self.editor_enabled() && self.editor.mode() == EditorMode::Insert => {
                 self.editor.insert_indent();
