@@ -138,12 +138,53 @@ wait_for_submit_ready() {
   wait_for_predicate "$1" pane_is_submit_ready submit-ready 2
 }
 
+last_prompt_line() {
+  pane_text=$1
+  printf '%s\n' "$pane_text" | grep -F "Ctrl-P palette" | tail -n 1 || true
+}
+
+pane_prompt_line_differs() {
+  pane_text=$1
+  expected=$2
+  prompt_line=$(last_prompt_line "$pane_text")
+  [ -n "$prompt_line" ] || return 1
+  [ "$prompt_line" != "$expected" ]
+}
+
+wait_for_prompt_line_change() {
+  session=$1
+  expected=$2
+  description=$3
+  deadline=$(($(now_ns) + TIMEOUT_SECONDS * 1000000000))
+
+  while :; do
+    pane_text=$(capture_pane "$session")
+    if pane_prompt_line_differs "$pane_text" "$expected"; then
+      return 0
+    fi
+
+    if [ "$(now_ns)" -ge "$deadline" ]; then
+      log_file="$ROOT/target/$SESSION-$description.timeout.log"
+      printf '%s\n' "$pane_text" > "$log_file"
+      printf 'timed out waiting for %s; pane saved to %s\n' "$description" "$log_file" >&2
+      return 1
+    fi
+
+    sleep "$POLL_SECONDS"
+  done
+}
+
 submit_cell() {
   session=$1
   text=$2
   wait_for_submit_ready "$session"
+  before_pane=$(capture_pane "$session")
+  before_prompt=$(last_prompt_line "$before_pane")
   tmux send-keys -t "$session" -l "$text"
   tmux send-keys -t "$session" Enter
+  if [ -n "$before_prompt" ]; then
+    wait_for_prompt_line_change "$session" "$before_prompt" submit-started
+  fi
   wait_for_submit_ready "$session"
 }
 

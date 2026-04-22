@@ -271,6 +271,36 @@ fn multiline_output_then_short_output_stays_clean() {
 }
 
 #[test]
+fn bottom_pinned_streaming_output_then_short_output_executes_cleanly() {
+    let Some(output) = run_repro(
+        "bottom-pinned-streaming-output",
+        "none",
+        &[
+            ("TMUX_SIZE", "120x20"),
+            (
+                "PRE_INPUT",
+                "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah\nimport sys,time; exec(\"for i in range(8):\\n sys.stdout.write(f\\\"progress {i}\\\" + chr(13)); sys.stdout.flush(); time.sleep(0.02)\\nprint(\\\"done\\\")\")\nprint(\"after\")",
+            ),
+            (
+                "INPUTS",
+                "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah\nimport sys,time; exec(\"for i in range(8):\\n sys.stdout.write(f\\\"progress {i}\\\" + chr(13)); sys.stdout.flush(); time.sleep(0.02)\\nprint(\\\"done\\\")\")\nprint(\"after\")",
+            ),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "160"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "progress 7");
+    assert_contains(&output.after, "done");
+    assert_contains(&output.after, "In [6]: print(\"after\")");
+    assert_contains(&output.after, "after");
+    assert_not_contains(&output.after, "1 print(\"after\")");
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [7]", "Ctrl-P palette"]);
+}
+
+#[test]
 fn bottom_pinned_transcript_repaint_clears_stale_busy_status() {
     let Some(output) = run_repro(
         "bottom-pinned-stale-busy",
