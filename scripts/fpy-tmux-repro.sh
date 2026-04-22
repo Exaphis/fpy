@@ -27,6 +27,7 @@ fi
 PRE_INPUT="${PRE_INPUT-1+1}"
 INPUTS="${INPUTS-$PRE_INPUT}"
 CAPTURE_LINES="${CAPTURE_LINES:-40}"
+CAPTURE_VISIBLE_ONLY="${CAPTURE_VISIBLE_ONLY:-0}"
 BEFORE_LOG="${BEFORE_LOG:-$ROOT/target/fpy-tmux-repro.before.log}"
 AFTER_LOG="${AFTER_LOG:-$ROOT/target/fpy-tmux-repro.after.log}"
 PASTE_TEXT="${PASTE_TEXT:-x = 1
@@ -49,7 +50,11 @@ now_ns() {
 }
 
 capture_pane() {
-  tmux capture-pane -pt "$1" -S "-$CAPTURE_LINES"
+  if [ "$CAPTURE_VISIBLE_ONLY" = "1" ]; then
+    tmux capture-pane -pt "$1"
+  else
+    tmux capture-pane -pt "$1" -S "-$CAPTURE_LINES"
+  fi
 }
 
 pane_has_usable_input() {
@@ -59,9 +64,10 @@ pane_has_usable_input() {
 
 pane_is_submit_ready() {
   pane_text=$1
-  printf '%s' "$pane_text" | grep -F "Ctrl-P palette" >/dev/null 2>&1 || return 1
-  printf '%s' "$pane_text" | grep -F "Connecting to kernel..." >/dev/null 2>&1 && return 1
-  printf '%s' "$pane_text" | grep -F "Kernel busy. Ctrl-C to interrupt" >/dev/null 2>&1 && return 1
+  prompt_line=$(printf '%s\n' "$pane_text" | grep -F "Ctrl-P palette" | tail -n 1 || true)
+  [ -n "$prompt_line" ] || return 1
+  printf '%s' "$prompt_line" | grep -F "Connecting to kernel..." >/dev/null 2>&1 && return 1
+  printf '%s' "$prompt_line" | grep -F "Kernel busy. Ctrl-C to interrupt" >/dev/null 2>&1 && return 1
   return 0
 }
 
@@ -172,7 +178,7 @@ wait_for_usable_input "$SESSION"
 
 submit_lines "$SESSION" "$INPUTS"
 
-tmux capture-pane -pt "$SESSION" -S "-$CAPTURE_LINES" > "$BEFORE_LOG"
+capture_pane "$SESSION" > "$BEFORE_LOG"
 
 case "$ACTION" in
   edit-left)
@@ -285,7 +291,7 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" "repr(input())" Enter
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Enter
-    wait_for_text "$SESSION" "Out[1]" "stdin-empty-reply-output"
+    wait_for_text "$SESSION" "Out[" "stdin-empty-reply-output"
     ;;
   stdin-prompt)
     wait_for_submit_ready "$SESSION"
@@ -308,7 +314,7 @@ case "$ACTION" in
     sleep 0.1
     tmux send-keys -t "$SESSION" -l "x"
     tmux send-keys -t "$SESSION" Enter
-    wait_for_text "$SESSION" "Out[1]" "stdin-ctrl-d-output"
+    wait_for_text "$SESSION" "Out[" "stdin-ctrl-d-output"
     ;;
   stdin-ctrl-c)
     wait_for_submit_ready "$SESSION"
@@ -455,7 +461,7 @@ esac
 
 sleep "$EXIT_WAIT"
 
-tmux capture-pane -pt "$SESSION" -S "-$CAPTURE_LINES" > "$AFTER_LOG"
+capture_pane "$SESSION" > "$AFTER_LOG"
 
 printf 'session: %s\n' "$SESSION"
 printf 'before: %s\n' "$BEFORE_LOG"

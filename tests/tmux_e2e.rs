@@ -41,7 +41,17 @@ fn idle_prompt_emits_no_redundant_terminal_output() {
         .status();
 
     let status = Command::new("tmux")
-        .args(["new-session", "-d", "-s", &session, "-x", "120", "-y", "40", "zsh"])
+        .args([
+            "new-session",
+            "-d",
+            "-s",
+            &session,
+            "-x",
+            "120",
+            "-y",
+            "40",
+            "zsh",
+        ])
         .status()
         .expect("start tmux session");
     assert!(status.success(), "failed to start tmux session");
@@ -53,9 +63,19 @@ fn idle_prompt_emits_no_redundant_terminal_output() {
         .expect("pipe tmux pane");
     assert!(status.success(), "failed to pipe tmux pane");
 
-    let launch = format!("'{}' run --python '{}'", fpy_bin.display(), python_bin.display());
+    let launch = format!(
+        "'{}' run --python '{}'",
+        fpy_bin.display(),
+        python_bin.display()
+    );
     let status = Command::new("tmux")
-        .args(["send-keys", "-t", &session, &format!("cd '{}'", repo_root.display()), "Enter"])
+        .args([
+            "send-keys",
+            "-t",
+            &session,
+            &format!("cd '{}'", repo_root.display()),
+            "Enter",
+        ])
         .status()
         .expect("send repo root");
     assert!(status.success(), "failed to send repo root");
@@ -66,7 +86,11 @@ fn idle_prompt_emits_no_redundant_terminal_output() {
     assert!(status.success(), "failed to launch fpy");
 
     wait_for_submit_ready(&session, Duration::from_secs(20));
-    wait_for_stable_file_size(&ansi_log, Duration::from_millis(300), Duration::from_secs(5));
+    wait_for_stable_file_size(
+        &ansi_log,
+        Duration::from_millis(300),
+        Duration::from_secs(5),
+    );
 
     let baseline = file_len(&ansi_log);
     thread::sleep(Duration::from_millis(700));
@@ -77,7 +101,8 @@ fn idle_prompt_emits_no_redundant_terminal_output() {
         .status();
 
     assert_eq!(
-        after_idle, baseline,
+        after_idle,
+        baseline,
         "expected no additional terminal output while idle; baseline={baseline}, after_idle={after_idle}, ansi log={} ",
         ansi_log.display()
     );
@@ -141,6 +166,108 @@ fn bottom_of_screen_result_still_visible() {
     assert_contains(&output.after, "In [5]: 1+1");
     assert_contains(&output.after, "Out[5]: 2");
     assert_line_contains_all(&output.after, &["INS", "In [6]", "Ctrl-P palette"]);
+}
+
+#[test]
+fn long_output_transition_to_bottom_pinned_preserves_tail() {
+    let Some(output) = run_repro(
+        "long-output-transition-bottom",
+        "none",
+        &[
+            ("TMUX_SIZE", "120x20"),
+            (
+                "PRE_INPUT",
+                "print(\"\\n\".join(f\"line {i}\" for i in range(1,41)))",
+            ),
+            (
+                "INPUTS",
+                "print(\"\\n\".join(f\"line {i}\" for i in range(1,41)))",
+            ),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "160"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "line 39");
+    assert_contains(&output.after, "line 40");
+    assert_bracketed_runtime_after(&output.after, "line 40");
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
+    assert_not_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+    assert_last_prompt_line_contains_none(
+        &output.after,
+        &[
+            "Connecting to kernel...",
+            "Kernel busy. Ctrl-C to interrupt",
+        ],
+    );
+}
+
+#[test]
+fn long_output_without_trailing_newline_then_execute_result_stays_clean() {
+    let Some(output) = run_repro(
+        "long-output-no-newline-bottom",
+        "none",
+        &[
+            ("TMUX_SIZE", "120x20"),
+            (
+                "PRE_INPUT",
+                "import sys; sys.stdout.write(\"\\n\".join(f\"line {i}\" for i in range(1,41))); sys.stdout.flush(); 0",
+            ),
+            (
+                "INPUTS",
+                "import sys; sys.stdout.write(\"\\n\".join(f\"line {i}\" for i in range(1,41))); sys.stdout.flush(); 0",
+            ),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "180"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "line 39");
+    assert_contains(&output.after, "line 40");
+    assert_contains(&output.after, "Out[1]: 0");
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
+    assert_not_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+}
+
+#[test]
+fn multiline_output_then_short_output_stays_clean() {
+    let Some(output) = run_repro(
+        "multiline-then-short-output",
+        "none",
+        &[
+            ("TMUX_SIZE", "120x20"),
+            (
+                "PRE_INPUT",
+                "print(\"\\n\".join(f\"line {i}\" for i in range(1,16)))\nprint(\"short\")",
+            ),
+            (
+                "INPUTS",
+                "print(\"\\n\".join(f\"line {i}\" for i in range(1,16)))\nprint(\"short\")",
+            ),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "120"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "line 15");
+    assert_contains(&output.after, "In [2]: print(\"short\")");
+    assert_contains(&output.after, "short\n[");
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [3]", "Ctrl-P palette"]);
+    assert_last_prompt_line_contains_none(
+        &output.after,
+        &[
+            "Connecting to kernel...",
+            "Kernel busy. Ctrl-C to interrupt",
+        ],
+    );
 }
 
 #[test]
@@ -281,7 +408,10 @@ fn pdb_prompt_and_commands_are_visible() {
         return;
     };
 
-    assert_contains(&output.after, "In [1]: import pdb; pdb.set_trace(); print(\"after\")");
+    assert_contains(
+        &output.after,
+        "In [1]: import pdb; pdb.set_trace(); print(\"after\")",
+    );
     assert!(
         output.after.contains("(Pdb) where") || output.after.contains("ipdb> where"),
         "expected a visible debugger prompt for `where` in output:\n{}",
@@ -343,7 +473,12 @@ fn can_compose_while_kernel_is_busy() {
     assert_contains(&output.after, "1 1+1");
     assert_line_contains_all(
         &output.after,
-        &["INS", "In [2]", "Kernel busy. Ctrl-C to interrupt", "Ctrl-P palette"],
+        &[
+            "INS",
+            "In [2]",
+            "Kernel busy. Ctrl-C to interrupt",
+            "Ctrl-P palette",
+        ],
     );
 }
 
@@ -382,7 +517,12 @@ fn ctrl_c_after_multiline_leaves_gap_below_prompt() {
     let Some(output) = run_repro(
         "ctrl-c-multiline-bottom",
         "ctrl-c-multiline-bottom",
-        &[("TMUX_SIZE", "120x20"), ("PRE_INPUT", ""), ("INPUTS", ""), ("EXIT_WAIT", "1")],
+        &[
+            ("TMUX_SIZE", "120x20"),
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "1"),
+        ],
     ) else {
         return;
     };
@@ -394,11 +534,7 @@ fn ctrl_c_after_multiline_leaves_gap_below_prompt() {
 
 #[test]
 fn vim_open_below_grows_on_first_try() {
-    let Some(output) = run_repro(
-        "vim-open-below",
-        "vim-open-below",
-        &[("EXIT_WAIT", "1")],
-    ) else {
+    let Some(output) = run_repro("vim-open-below", "vim-open-below", &[("EXIT_WAIT", "1")]) else {
         return;
     };
 
@@ -412,7 +548,11 @@ fn history_up_reruns_previous_cell() {
     let Some(output) = run_repro(
         "history-up",
         "history-up",
-        &[("PRE_INPUT", "1+1\n2+2"), ("INPUTS", "1+1\n2+2"), ("EXIT_WAIT", "1")],
+        &[
+            ("PRE_INPUT", "1+1\n2+2"),
+            ("INPUTS", "1+1\n2+2"),
+            ("EXIT_WAIT", "1"),
+        ],
     ) else {
         return;
     };
@@ -428,7 +568,11 @@ fn ctrl_k_reruns_previous_history_cell() {
     let Some(output) = run_repro(
         "history-ctrl-k",
         "history-ctrl-k",
-        &[("PRE_INPUT", "1+1\n2+2"), ("INPUTS", "1+1\n2+2"), ("EXIT_WAIT", "1")],
+        &[
+            ("PRE_INPUT", "1+1\n2+2"),
+            ("INPUTS", "1+1\n2+2"),
+            ("EXIT_WAIT", "1"),
+        ],
     ) else {
         return;
     };
@@ -444,7 +588,11 @@ fn ctrl_j_moves_back_down_from_history_to_blank_input() {
     let Some(output) = run_repro(
         "history-ctrl-k-ctrl-j",
         "history-ctrl-k-ctrl-j",
-        &[("PRE_INPUT", "1+1\n2+2"), ("INPUTS", "1+1\n2+2"), ("EXIT_WAIT", "1")],
+        &[
+            ("PRE_INPUT", "1+1\n2+2"),
+            ("INPUTS", "1+1\n2+2"),
+            ("EXIT_WAIT", "1"),
+        ],
     ) else {
         return;
     };
@@ -483,7 +631,10 @@ fn history_search_shows_multiple_results_and_multiline_preview() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "import"),
             ("CAPTURE_LINES", "80"),
         ],
@@ -519,7 +670,10 @@ fn history_search_recenters_results_before_selection_hits_bottom() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "import"),
             ("SEARCH_DOWN_COUNT", "5"),
             ("CAPTURE_LINES", "80"),
@@ -553,7 +707,10 @@ fn history_search_scrolls_results_with_selection() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "import"),
             ("SEARCH_DOWN_COUNT", "8"),
             ("CAPTURE_LINES", "80"),
@@ -570,12 +727,7 @@ fn history_search_scrolls_results_with_selection() {
 #[test]
 fn history_search_preview_expands_to_show_full_multiline_code_when_space_allows() {
     let history_dir = TempDir::new().expect("history dir");
-    write_history_record(
-        history_dir.path(),
-        "alpha\n1\n2\n3\n4\n5\n6",
-        None,
-        None,
-    );
+    write_history_record(history_dir.path(), "alpha\n1\n2\n3\n4\n5\n6", None, None);
 
     let Some(output) = run_repro(
         "history-search-preview-expand",
@@ -584,7 +736,10 @@ fn history_search_preview_expands_to_show_full_multiline_code_when_space_allows(
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "alpha"),
             ("TMUX_SIZE", "120x40"),
             ("CAPTURE_LINES", "80"),
@@ -619,7 +774,10 @@ fn history_search_matches_multiline_cells_and_loads_previewed_code() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "cuda"),
         ],
     ) else {
@@ -640,12 +798,7 @@ fn history_search_load_seeds_ctrl_k_history_navigation_for_multiline_cells() {
         Some(1_000_000),
         None,
     );
-    write_history_record(
-        history_dir.path(),
-        "beta = 2\nbeta",
-        Some(2_000_000),
-        None,
-    );
+    write_history_record(history_dir.path(), "beta = 2\nbeta", Some(2_000_000), None);
 
     let Some(output) = run_repro(
         "history-search-load-ctrl-k",
@@ -654,7 +807,10 @@ fn history_search_load_seeds_ctrl_k_history_navigation_for_multiline_cells() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "beta"),
         ],
     ) else {
@@ -674,12 +830,7 @@ fn history_search_load_seeds_ctrl_j_back_to_loaded_multiline_cell() {
         Some(1_000_000),
         None,
     );
-    write_history_record(
-        history_dir.path(),
-        "beta = 2\nbeta",
-        Some(2_000_000),
-        None,
-    );
+    write_history_record(history_dir.path(), "beta = 2\nbeta", Some(2_000_000), None);
 
     let Some(output) = run_repro(
         "history-search-load-ctrl-k-ctrl-j",
@@ -688,7 +839,10 @@ fn history_search_load_seeds_ctrl_j_back_to_loaded_multiline_cell() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "beta"),
         ],
     ) else {
@@ -714,7 +868,12 @@ fn history_search_query_relayout_does_not_mix_stale_rows() {
         Some(9_420_000),
         None,
     );
-    for duration_ns in [20_100_000_000, 220_100_000_000, 720_100_000_000, 20_000_000_000] {
+    for duration_ns in [
+        20_100_000_000,
+        220_100_000_000,
+        720_100_000_000,
+        20_000_000_000,
+    ] {
         write_history_record(
             history_dir.path(),
             "import pdb; pdb.set_trace(); print(\"after\")",
@@ -730,7 +889,10 @@ fn history_search_query_relayout_does_not_mix_stale_rows() {
             ("PRE_INPUT", ""),
             ("INPUTS", ""),
             ("EXIT_WAIT", "1"),
-            ("FPY_HISTORY_DIR", history_dir.path().to_str().expect("utf8 path")),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
             ("SEARCH_QUERY", "def fib"),
             ("TMUX_SIZE", "120x25"),
             ("CAPTURE_LINES", "80"),
@@ -787,6 +949,30 @@ fn persistent_history_is_available_in_new_sessions() {
 
     assert_contains(&second.after, "In [1]: 40+2");
     assert_contains(&second.after, "Out[1]: 42");
+}
+
+#[test]
+fn ctrl_l_clears_visible_screen_to_single_prompt() {
+    let Some(output) = run_repro(
+        "ctrl-l-visible-clear",
+        "ctrl-l",
+        &[
+            ("TMUX_SIZE", "120x20"),
+            ("PRE_INPUT", "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah\n1+1"),
+            ("INPUTS", "!ls -lah\n!ls -lah\n!ls -lah\n!ls -lah\n1+1"),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_VISIBLE_ONLY", "1"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [6]", "Ctrl-P palette"]);
+    assert_not_contains(&output.after, "Out[5]: 2");
+    assert_not_contains(&output.after, "In [5]: 1+1");
+    assert_not_contains(&output.after, "total 200");
+    assert_not_contains(&output.after, "!ls -lah");
 }
 
 #[test]
@@ -914,7 +1100,10 @@ fn assert_not_contains(haystack: &str, needle: &str) {
 }
 
 fn assert_line_count(haystack: &str, needle: &str, expected: usize) {
-    let count = haystack.lines().filter(|line| line.contains(needle)).count();
+    let count = haystack
+        .lines()
+        .filter(|line| line.contains(needle))
+        .count();
     assert_eq!(
         count, expected,
         "expected {needle:?} to appear {expected} time(s) in output:\n{haystack}"
@@ -946,7 +1135,12 @@ fn assert_blank_line_after_contains(haystack: &str, needle: &str) {
     let index = lines
         .iter()
         .position(|line| line.contains(needle))
-        .unwrap_or_else(|| panic!("expected to find line containing {:?} in output:\n{}", needle, haystack));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected to find line containing {:?} in output:\n{}",
+                needle, haystack
+            )
+        });
     assert!(
         index + 1 < lines.len() && lines[index + 1].trim().is_empty(),
         "expected a blank line immediately after a line containing {:?}:\n{}",
@@ -960,7 +1154,12 @@ fn assert_bracketed_runtime_after(haystack: &str, needle: &str) {
     let index = lines
         .iter()
         .position(|line| line.contains(needle))
-        .unwrap_or_else(|| panic!("expected to find line containing {:?} in output:\n{}", needle, haystack));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected to find line containing {:?} in output:\n{}",
+                needle, haystack
+            )
+        });
     let runtime_line = lines
         .iter()
         .skip(index + 1)
@@ -990,12 +1189,37 @@ fn assert_no_line_contains_all(haystack: &str, needles: &[&str]) {
     );
 }
 
-fn write_history_record(
-    root: &Path,
-    code: &str,
-    duration_ns: Option<u64>,
-    outcome: Option<&str>,
-) {
+fn assert_last_prompt_line_contains_all(haystack: &str, needles: &[&str]) {
+    let prompt_line = haystack
+        .lines()
+        .rev()
+        .find(|line| line.contains("Ctrl-P palette"))
+        .unwrap_or_else(|| panic!("expected a prompt line in output:\n{haystack}"));
+    assert!(
+        needles.iter().all(|needle| prompt_line.contains(needle)),
+        "expected last prompt line to contain all of {:?}, got {:?}\n{}",
+        needles,
+        prompt_line,
+        haystack
+    );
+}
+
+fn assert_last_prompt_line_contains_none(haystack: &str, needles: &[&str]) {
+    let prompt_line = haystack
+        .lines()
+        .rev()
+        .find(|line| line.contains("Ctrl-P palette"))
+        .unwrap_or_else(|| panic!("expected a prompt line in output:\n{haystack}"));
+    assert!(
+        needles.iter().all(|needle| !prompt_line.contains(needle)),
+        "expected last prompt line to contain none of {:?}, got {:?}\n{}",
+        needles,
+        prompt_line,
+        haystack
+    );
+}
+
+fn write_history_record(root: &Path, code: &str, duration_ns: Option<u64>, outcome: Option<&str>) {
     let host = "test-host";
     let host_dir = root.join(host);
     fs::create_dir_all(&host_dir).expect("create host history dir");
@@ -1028,12 +1252,21 @@ fn wait_for_submit_ready(session: &str, timeout: Duration) {
             .output()
             .expect("capture tmux pane");
         let pane = String::from_utf8_lossy(&output.stdout);
-        let has_prompt = pane.contains("Ctrl-P palette");
-        let busy = pane.contains("Connecting to kernel...") || pane.contains("Kernel busy. Ctrl-C to interrupt");
-        if has_prompt && !busy {
+        let prompt_line = pane
+            .lines()
+            .rev()
+            .find(|line| line.contains("Ctrl-P palette"));
+        let ready = prompt_line.is_some_and(|line| {
+            !line.contains("Connecting to kernel...")
+                && !line.contains("Kernel busy. Ctrl-C to interrupt")
+        });
+        if ready {
             return;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for submit-ready pane:\n{pane}");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for submit-ready pane:\n{pane}"
+        );
         thread::sleep(Duration::from_millis(50));
     }
 }
@@ -1064,7 +1297,9 @@ fn wait_for_stable_file_size(path: &Path, stable_for: Duration, timeout: Duratio
 }
 
 fn file_len(path: &Path) -> u64 {
-    fs::metadata(path).map(|metadata| metadata.len()).unwrap_or(0)
+    fs::metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
 }
 
 fn missing_prerequisites(repo_root: &Path) -> Option<String> {

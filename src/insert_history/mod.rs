@@ -31,6 +31,7 @@ where
     let max_top = screen_size
         .height
         .saturating_sub(area.height.min(screen_size.height.max(1)));
+    let target_top = area.y.saturating_add(rendered_rows).min(max_top);
 
     if area.y == max_top && area.y > 0 {
         insert_bottom_pinned_history(terminal, &lines, wrap_width, rendered_rows)?;
@@ -38,9 +39,23 @@ where
         return Ok(());
     }
 
+    if target_top == max_top && area.y < target_top {
+        insert_transition_to_bottom_pinned_history(
+            terminal,
+            &lines,
+            wrap_width,
+            rendered_rows,
+            target_top,
+        )?;
+        area.y = target_top;
+        terminal.set_viewport_area(area);
+        terminal.invalidate_viewport();
+        return Ok(());
+    }
+
     write_history_at_cursor(terminal.backend_mut(), area.y, &lines, wrap_width)?;
 
-    area.y = area.y.saturating_add(rendered_rows).min(max_top);
+    area.y = target_top;
     terminal.set_viewport_area(area);
     terminal.invalidate_viewport();
     Ok(())
@@ -74,6 +89,43 @@ where
         MoveTo(0, area.y),
         Clear(ClearType::UntilNewLine)
     )?;
+    std::io::Write::flush(writer)?;
+    Ok(())
+}
+
+fn insert_transition_to_bottom_pinned_history<B>(
+    terminal: &mut Terminal<B>,
+    lines: &[String],
+    wrap_width: usize,
+    rendered_rows: u16,
+    target_top: u16,
+) -> io::Result<()>
+where
+    B: Backend<Error = io::Error> + Write,
+{
+    let area = terminal.viewport_area();
+    let scroll_rows = area
+        .y
+        .saturating_add(rendered_rows)
+        .saturating_sub(target_top);
+    let effective_scroll = scroll_rows.min(area.y);
+    let start_row = area.y.saturating_sub(effective_scroll);
+    let history_bottom = target_top.saturating_sub(1);
+    let writer = terminal.backend_mut();
+
+    for row in area.y..area.bottom() {
+        queue!(writer, MoveTo(0, row), Clear(ClearType::UntilNewLine))?;
+    }
+
+    queue!(
+        writer,
+        Print(set_scroll_region(0, history_bottom)),
+        MoveTo(0, history_bottom),
+        ScrollUp(effective_scroll),
+        MoveTo(0, start_row)
+    )?;
+    write_history_lines(writer, lines, wrap_width)?;
+    queue!(writer, Print(reset_scroll_region()))?;
     std::io::Write::flush(writer)?;
     Ok(())
 }
