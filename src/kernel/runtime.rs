@@ -1,7 +1,12 @@
 use anyhow::Result;
 use serde_json::json;
-use tokio::{sync::{Mutex, mpsc}, task::JoinHandle};
-use zeromq::{DealerSocket, Socket, SocketOptions, SocketRecv, SocketSend, SubSocket, util::PeerIdentity};
+use tokio::{
+    sync::{Mutex, mpsc},
+    task::JoinHandle,
+};
+use zeromq::{
+    DealerSocket, Socket, SocketOptions, SocketRecv, SocketSend, SubSocket, util::PeerIdentity,
+};
 
 use crate::{
     connection::{Channel, ConnectionFile},

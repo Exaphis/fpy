@@ -10,8 +10,7 @@ use crossterm::{
         KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
-    execute,
-    queue,
+    execute, queue,
     style::ResetColor,
     terminal::{self, Clear, ClearType, ScrollUp},
     terminal::{EnableLineWrap, disable_raw_mode, enable_raw_mode},
@@ -226,7 +225,8 @@ impl EditorController {
     }
 
     fn history_position(&self) -> Option<(usize, usize)> {
-        self.history_index.map(|index| (index + 1, self.history.len()))
+        self.history_index
+            .map(|index| (index + 1, self.history.len()))
     }
 
     fn on_paste(&mut self, text: String) {
@@ -391,7 +391,8 @@ impl AppUi {
     }
 
     pub fn record_history_submission(&mut self, code: &str) -> usize {
-        self.history_entries.push(HistorySearchEntry::new(code.to_string()));
+        self.history_entries
+            .push(HistorySearchEntry::new(code.to_string()));
         self.history_entries.len().saturating_sub(1)
     }
 
@@ -499,7 +500,13 @@ impl AppUi {
         let mut handle = stdout();
         let _ = execute!(handle, DisableBracketedPaste, PopKeyboardEnhancementFlags);
         write!(handle, "\x1b[r\x1b[0m")?;
-        execute!(handle, Show, SetCursorStyle::DefaultUserShape, ResetColor, EnableLineWrap)?;
+        execute!(
+            handle,
+            Show,
+            SetCursorStyle::DefaultUserShape,
+            ResetColor,
+            EnableLineWrap
+        )?;
         for row in pane.y..pane.bottom() {
             execute!(
                 handle,
@@ -607,16 +614,24 @@ impl AppUi {
                     }
                     OverlayKind::HistorySearch => {
                         frame.render_widget(ClearWidget, area);
-                        render_history_search_popup(frame, content_area, history_search, history_entries);
+                        render_history_search_popup(
+                            frame,
+                            content_area,
+                            history_search,
+                            history_entries,
+                        );
                     }
                     OverlayKind::None => {
                         frame.render_widget(ClearWidget, content_area);
                         frame.render_widget(ClearWidget, status_area);
-                        let gutter_width = editor_gutter_width(awaiting_input.as_ref(), visible_lines)
-                            .min(content_area.width);
-                        let [gutter_area, content_area] =
-                            Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(1)])
-                                .areas(content_area);
+                        let gutter_width =
+                            editor_gutter_width(awaiting_input.as_ref(), visible_lines)
+                                .min(content_area.width);
+                        let [gutter_area, content_area] = Layout::horizontal([
+                            Constraint::Length(gutter_width),
+                            Constraint::Min(1),
+                        ])
+                        .areas(content_area);
                         let gutter_lines = editor_gutter_lines(
                             awaiting_input.as_ref(),
                             gutter_area.height as usize,
@@ -648,16 +663,22 @@ impl AppUi {
                         .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
                         .unwrap_or(0);
                     let palette_hint_width = editor_palette_hint_width();
-                    let [status_text_area, spinner_gap_area, spinner_area, transient_area, filler_area, palette_hint_area] =
-                        Layout::horizontal([
-                            Constraint::Length(prefix_width),
-                            Constraint::Length(1),
-                            Constraint::Length(2),
-                            Constraint::Length(transient_width),
-                            Constraint::Min(1),
-                            Constraint::Length(palette_hint_width),
-                        ])
-                        .areas(status_area);
+                    let [
+                        status_text_area,
+                        spinner_gap_area,
+                        spinner_area,
+                        transient_area,
+                        filler_area,
+                        palette_hint_area,
+                    ] = Layout::horizontal([
+                        Constraint::Length(prefix_width),
+                        Constraint::Length(1),
+                        Constraint::Length(2),
+                        Constraint::Length(transient_width),
+                        Constraint::Min(1),
+                        Constraint::Length(palette_hint_width),
+                    ])
+                    .areas(status_area);
                     frame.render_widget(
                         editor_status_prefix(editor.mode(), status_detail.as_deref()),
                         status_text_area,
@@ -876,7 +897,9 @@ impl AppUi {
             }
             KeyEvent {
                 code: KeyCode::Up, ..
-            } if self.editor_enabled() && self.editor.is_single_line() && self.editor.has_history() =>
+            } if self.editor_enabled()
+                && self.editor.is_single_line()
+                && self.editor.has_history() =>
             {
                 self.editor.history_up();
                 None
@@ -884,7 +907,9 @@ impl AppUi {
             KeyEvent {
                 code: KeyCode::Down,
                 ..
-            } if self.editor_enabled() && self.editor.is_single_line() && self.editor.has_history() =>
+            } if self.editor_enabled()
+                && self.editor.is_single_line()
+                && self.editor.has_history() =>
             {
                 self.editor.history_down();
                 None
@@ -914,7 +939,8 @@ impl AppUi {
                 None
             }
             KeyEvent {
-                code: KeyCode::Down, ..
+                code: KeyCode::Down,
+                ..
             } => {
                 let max = self.history_search.results.len().saturating_sub(1);
                 self.history_search.selected = (self.history_search.selected + 1).min(max);
@@ -958,7 +984,8 @@ impl AppUi {
                 modifiers,
                 ..
             } if !modifiers.contains(KeyModifiers::CONTROL)
-                && !modifiers.contains(KeyModifiers::ALT) => {
+                && !modifiers.contains(KeyModifiers::ALT) =>
+            {
                 self.history_search.query.push(ch);
                 self.refresh_history_search_results();
                 None
@@ -1024,7 +1051,10 @@ impl AppUi {
             .rev()
             .filter_map(|(index, entry)| {
                 pattern
-                    .score(Utf32Str::new(&entry.search_text, &mut buf), &mut self.history_search.matcher)
+                    .score(
+                        Utf32Str::new(&entry.search_text, &mut buf),
+                        &mut self.history_search.matcher,
+                    )
                     .map(|score| (index, score))
             })
             .collect::<Vec<_>>();
@@ -1121,12 +1151,12 @@ impl AppUi {
             1 + editor_status_height()
         };
         match self.overlay_kind() {
-            OverlayKind::HistorySearch => input_rows.max(
-                HISTORY_SEARCH_MIN_PANE_HEIGHT.max(history_search_desired_pane_height(
+            OverlayKind::HistorySearch => input_rows.max(HISTORY_SEARCH_MIN_PANE_HEIGHT.max(
+                history_search_desired_pane_height(
                     self.history_search.results.len(),
                     self.history_search_selected_preview_rows(),
-                )),
-            ),
+                ),
+            )),
             OverlayKind::Palette => viewport_height_for_editor(input_rows, true),
             OverlayKind::None => viewport_height_for_editor(input_rows, false),
         }
@@ -1204,12 +1234,21 @@ impl AppUi {
         let status_row = pane.bottom().saturating_sub(1);
         let terminal = self.terminal_mut()?;
         let handle = terminal.backend_mut();
-        execute!(handle, MoveTo(0, status_row), Clear(ClearType::UntilNewLine))?;
+        execute!(
+            handle,
+            MoveTo(0, status_row),
+            Clear(ClearType::UntilNewLine)
+        )?;
         handle.flush()?;
         Ok(())
     }
 
-    fn scroll_history_for_pane_growth(&mut self, old: Rect, new: Rect, screen_height: u16) -> Result<()> {
+    fn scroll_history_for_pane_growth(
+        &mut self,
+        old: Rect,
+        new: Rect,
+        screen_height: u16,
+    ) -> Result<()> {
         if old.is_empty()
             || new.height <= old.height
             || old.bottom() != screen_height
@@ -1233,7 +1272,6 @@ impl AppUi {
         handle.flush()?;
         Ok(())
     }
-
 }
 
 impl HistorySearchEntry {
@@ -1275,7 +1313,11 @@ impl HistorySearchEntry {
             return truncate_chars(&right, width);
         }
         let left_width = width.saturating_sub(right_width + 1);
-        format!("{:<left_width$} {}", truncate_chars(&left, left_width), right)
+        format!(
+            "{:<left_width$} {}",
+            truncate_chars(&left, left_width),
+            right
+        )
     }
 
     fn metadata(&self) -> String {
@@ -1294,10 +1336,19 @@ impl HistorySearchEntry {
     }
 }
 
-fn render_palette_popup(frame: &mut crate::custom_terminal::Frame<'_>, content_area: Rect, palette_index: usize) {
+fn render_palette_popup(
+    frame: &mut crate::custom_terminal::Frame<'_>,
+    content_area: Rect,
+    palette_index: usize,
+) {
     let palette_width = content_area.width.clamp(24, 56);
     let palette_height = content_area.height.max(3);
-    let palette_area = Rect::new(content_area.x, content_area.y, palette_width, palette_height);
+    let palette_area = Rect::new(
+        content_area.x,
+        content_area.y,
+        palette_width,
+        palette_height,
+    );
     frame.render_widget(
         Block::default()
             .title("Command Palette")
@@ -1369,7 +1420,12 @@ fn render_history_search_popup(
     let query_area = Rect::new(inner.x, inner.y, inner.width, 1);
     let results_area = Rect::new(inner.x, query_area.bottom(), inner.width, results_height);
     let preview_label_area = Rect::new(inner.x, results_area.bottom(), inner.width, 1);
-    let preview_area = Rect::new(inner.x, preview_label_area.bottom(), inner.width, preview_height);
+    let preview_area = Rect::new(
+        inner.x,
+        preview_label_area.bottom(),
+        inner.width,
+        preview_height,
+    );
 
     frame.render_widget(ClearWidget, inner);
     frame.render_widget(
@@ -1394,10 +1450,7 @@ fn render_history_search_popup(
                 };
                 let marker = if is_selected { "> " } else { "  " };
                 let summary_width = results_width.saturating_sub(marker.chars().count());
-                (
-                    format!("{marker}{}", entry.summary(summary_width)),
-                    style,
-                )
+                (format!("{marker}{}", entry.summary(summary_width)), style)
             } else {
                 (" ".repeat(results_width), Style::default())
             }
@@ -1438,7 +1491,10 @@ fn render_history_search_popup(
 fn render_history_search_status(frame: &mut crate::custom_terminal::Frame<'_>, status_area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" search ", Style::default().fg(Color::Black).bg(Color::Green)),
+            Span::styled(
+                " search ",
+                Style::default().fg(Color::Black).bg(Color::Green),
+            ),
             Span::raw("  Ctrl-R next  Enter load  Esc cancel"),
         ])),
         status_area,
@@ -1448,11 +1504,15 @@ fn render_history_search_status(frame: &mut crate::custom_terminal::Frame<'_>, s
 fn history_search_desired_popup_height(result_count: usize, preview_rows: usize) -> u16 {
     let desired_results = result_count.clamp(1, HISTORY_SEARCH_RESULT_LIMIT) as u16;
     let desired_preview = preview_rows.max(1) as u16;
-    4u16.saturating_add(desired_results).saturating_add(desired_preview)
+    4u16.saturating_add(desired_results)
+        .saturating_add(desired_preview)
 }
 
 fn history_search_desired_pane_height(result_count: usize, preview_rows: usize) -> u16 {
-    1u16.saturating_add(history_search_desired_popup_height(result_count, preview_rows))
+    1u16.saturating_add(history_search_desired_popup_height(
+        result_count,
+        preview_rows,
+    ))
 }
 
 fn history_search_layout_for_popup(
@@ -1486,11 +1546,23 @@ fn format_duration_ns(duration_ns: u64) -> String {
     let elapsed = duration.as_secs_f64();
     if elapsed < 0.001 {
         let micros = elapsed * 1e6;
-        let decimals = if micros >= 100.0 { 0 } else if micros >= 10.0 { 1 } else { 2 };
+        let decimals = if micros >= 100.0 {
+            0
+        } else if micros >= 10.0 {
+            1
+        } else {
+            2
+        };
         format!("{micros:.decimals$}µs")
     } else if elapsed < 1.0 {
         let millis = elapsed * 1e3;
-        let decimals = if millis >= 100.0 { 0 } else if millis >= 10.0 { 1 } else { 2 };
+        let decimals = if millis >= 100.0 {
+            0
+        } else if millis >= 10.0 {
+            1
+        } else {
+            2
+        };
         format!("{millis:.decimals$}ms")
     } else if elapsed < 60.0 {
         let decimals = if elapsed >= 10.0 { 1 } else { 2 };

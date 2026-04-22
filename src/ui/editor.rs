@@ -312,7 +312,10 @@ mod tests {
 
     #[test]
     fn uses_prompt_label_in_status_bar() {
-        assert_eq!(status_label(None, "In [3]", None), Some("In [3]".to_string()));
+        assert_eq!(
+            status_label(None, "In [3]", None),
+            Some("In [3]".to_string())
+        );
     }
 
     #[test]

@@ -134,7 +134,9 @@ impl ExecutionTimer {
     }
 
     fn finish(&mut self) -> Option<ElapsedDuration> {
-        self.started_at.take().map(|started_at| started_at.elapsed())
+        self.started_at
+            .take()
+            .map(|started_at| started_at.elapsed())
     }
 
     fn clear(&mut self) {
@@ -342,7 +344,15 @@ async fn handle_ready_input(
     input: Result<Option<UiAction>>,
 ) -> Result<bool> {
     if let Some(action) = input? {
-        handle_ready_ui_action(ui, kernel, execution_timer, history, pending_history, action).await
+        handle_ready_ui_action(
+            ui,
+            kernel,
+            execution_timer,
+            history,
+            pending_history,
+            action,
+        )
+        .await
     } else {
         Ok(false)
     }
@@ -379,7 +389,11 @@ fn handle_kernel_event(
                     if let Some(duration) = execution_timer.finish() {
                         if let Some(entry) = pending_history.take() {
                             persist_history_done(ui, history, &entry, duration)?;
-                            ui.record_history_completion(entry.ui_history_index, duration, entry.outcome);
+                            ui.record_history_completion(
+                                entry.ui_history_index,
+                                duration,
+                                entry.outcome,
+                            );
                         }
                         ui.insert_runtime(duration)?;
                     }
@@ -415,7 +429,10 @@ fn handle_kernel_event(
         }
         KernelEvent::Error { traceback } => {
             if let Some(entry) = pending_history.as_mut() {
-                entry.outcome = if traceback.iter().any(|line| line.contains("KeyboardInterrupt")) {
+                entry.outcome = if traceback
+                    .iter()
+                    .any(|line| line.contains("KeyboardInterrupt"))
+                {
                     HistoryOutcome::Interrupted
                 } else {
                     HistoryOutcome::Error
@@ -484,7 +501,9 @@ async fn handle_ready_ui_action(
                     Ok(seq) => entry_seq = Some(seq),
                     Err(error) => {
                         *history = None;
-                        ui.insert_transcript(format!("warning: persistent history disabled: {error}"))?;
+                        ui.insert_transcript(format!(
+                            "warning: persistent history disabled: {error}"
+                        ))?;
                     }
                 }
             }

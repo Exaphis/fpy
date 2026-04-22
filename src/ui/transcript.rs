@@ -148,7 +148,9 @@ pub(super) fn rendered_line_count(text: &str, width: u16) -> u16 {
 mod tests {
     use std::time::Duration;
 
-    use super::{format_runtime, highlighted_execute_input, rendered_line_count, runtime_line, strip_ansi};
+    use super::{
+        format_runtime, highlighted_execute_input, rendered_line_count, runtime_line, strip_ansi,
+    };
 
     #[test]
     fn strips_basic_ansi_sequences() {

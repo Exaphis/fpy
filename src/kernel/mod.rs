@@ -274,7 +274,9 @@ async fn wait_for_connection(local: &mut LocalKernel) -> Result<ConnectionFile> 
 }
 
 fn default_pydevd_disable_file_validation_env() -> Option<OsString> {
-    std::env::var_os("PYDEVD_DISABLE_FILE_VALIDATION").is_none().then_some(OsString::from("1"))
+    std::env::var_os("PYDEVD_DISABLE_FILE_VALIDATION")
+        .is_none()
+        .then_some(OsString::from("1"))
 }
 
 fn send_sigint(pid: Option<u32>) -> Result<()> {
@@ -304,8 +306,7 @@ mod tests {
     use tempfile::{NamedTempFile, TempDir};
 
     use super::{
-        LaunchConfig, LocalKernel, default_pydevd_disable_file_validation_env,
-        local_exit_message,
+        LaunchConfig, LocalKernel, default_pydevd_disable_file_validation_env, local_exit_message,
     };
     use crate::kernel::{diagnostics::append_startup_context, messages::pick_text_payload};
 

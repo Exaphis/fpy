@@ -148,17 +148,19 @@ mod tests {
 
     #[test]
     fn maps_status_messages_to_kernel_status() {
-        let events = iopub_message_to_events(wire_message(
-            "status",
-            json!({ "execution_state": "busy" }),
+        let events =
+            iopub_message_to_events(wire_message("status", json!({ "execution_state": "busy" })));
+        assert!(matches!(
+            events.as_slice(),
+            [KernelEvent::Status(KernelStatus::Busy)]
         ));
-        assert!(matches!(events.as_slice(), [KernelEvent::Status(KernelStatus::Busy)]));
 
-        let events = iopub_message_to_events(wire_message(
-            "status",
-            json!({ "execution_state": "idle" }),
+        let events =
+            iopub_message_to_events(wire_message("status", json!({ "execution_state": "idle" })));
+        assert!(matches!(
+            events.as_slice(),
+            [KernelEvent::Status(KernelStatus::Idle)]
         ));
-        assert!(matches!(events.as_slice(), [KernelEvent::Status(KernelStatus::Idle)]));
     }
 
     #[test]
@@ -172,10 +174,12 @@ mod tests {
         ));
 
         match events.as_slice() {
-            [KernelEvent::ExecuteResult {
-                execution_count,
-                text,
-            }] => {
+            [
+                KernelEvent::ExecuteResult {
+                    execution_count,
+                    text,
+                },
+            ] => {
                 assert_eq!(*execution_count, Some(7));
                 assert_eq!(text, "**hi**");
             }

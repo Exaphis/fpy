@@ -177,7 +177,10 @@ mod tests {
     fn round_trips_jupyter_frames_with_ids_and_buffers() {
         let codec = MessageCodec::new("secret".into());
         let mut message = codec.message("execute_request", None, json!({ "code": "1 + 1" }));
-        message.ids = vec![Bytes::from_static(b"client-a"), Bytes::from_static(b"client-b")];
+        message.ids = vec![
+            Bytes::from_static(b"client-a"),
+            Bytes::from_static(b"client-b"),
+        ];
         message.buffers = vec![Bytes::from_static(b"buffer")];
         let zmq = codec.encode_zmq(&message).expect("encode");
         let decoded = codec.decode(zmq).expect("decode");
@@ -197,7 +200,13 @@ mod tests {
         frames[5] = Bytes::from_static(br#"{"code":"1 + 2"}"#);
         let tampered = ZmqMessage::try_from(frames).expect("rebuild tampered message");
 
-        let error = codec.decode(tampered).expect_err("tampered signature should fail");
-        assert!(error.to_string().contains("invalid Jupyter message signature"));
+        let error = codec
+            .decode(tampered)
+            .expect_err("tampered signature should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid Jupyter message signature")
+        );
     }
 }

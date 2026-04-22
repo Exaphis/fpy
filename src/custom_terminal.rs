@@ -465,12 +465,7 @@ fn to_crossterm_color(color: Color) -> crossterm::style::Color {
 #[cfg(test)]
 mod tests {
     use super::{DrawCommand, diff_buffers};
-    use ratatui::{
-        buffer::Buffer,
-        layout::Rect,
-        style::Color,
-        style::Style,
-    };
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color, style::Style};
 
     #[test]
     fn fully_blank_rows_clear_from_column_zero() {
@@ -572,8 +567,10 @@ mod tests {
         for command in commands {
             match command {
                 DrawCommand::Put { x, y, cell } => {
-                    rendered[y.saturating_sub(area.y) as usize]
-                        .replace_range(x.saturating_sub(area.x) as usize..x.saturating_sub(area.x) as usize + 1, cell.symbol());
+                    rendered[y.saturating_sub(area.y) as usize].replace_range(
+                        x.saturating_sub(area.x) as usize..x.saturating_sub(area.x) as usize + 1,
+                        cell.symbol(),
+                    );
                 }
                 DrawCommand::ClearToEnd { x, y, .. } => {
                     let row = &mut rendered[y.saturating_sub(area.y) as usize];
