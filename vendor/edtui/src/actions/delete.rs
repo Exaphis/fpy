@@ -338,7 +338,14 @@ impl Execute for DeleteSelection {
 pub(crate) fn delete_selection(state: &mut EditorState, selection: &Selection) -> Lines {
     state.cursor = selection.start();
     state.clamp_column();
-    selection.extract_from(&mut state.lines)
+    let extracted = selection.extract_from(&mut state.lines);
+    clamp_cursor_to_buffer(state);
+    extracted
+}
+
+fn clamp_cursor_to_buffer(state: &mut EditorState) {
+    state.cursor.row = state.cursor.row.min(state.lines.len().saturating_sub(1));
+    state.clamp_column();
 }
 
 /// Joins line below to the current line.
@@ -498,8 +505,18 @@ mod tests {
         state.selection = Some(Selection::new(st, en));
 
         DeleteSelection.execute(&mut state);
-        // assert_eq!(state.cursor, Index2::new(0, 1));
+        assert_eq!(state.cursor, Index2::new(0, 3));
         assert_eq!(state.lines, Lines::from("123."));
+    }
+
+    #[test]
+    fn test_delete_line_selection_clamps_cursor_to_buffer_end() {
+        let mut state = EditorState::new(Lines::from("one\ntwo\nthree"));
+        state.selection = Some(Selection::new(Index2::new(1, 0), Index2::new(2, 4)).line_mode());
+
+        DeleteSelection.execute(&mut state);
+        assert_eq!(state.cursor, Index2::new(0, 0));
+        assert_eq!(state.lines, Lines::from("one"));
     }
 
     #[test]
