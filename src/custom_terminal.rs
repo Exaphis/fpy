@@ -347,6 +347,7 @@ where
                 queue!(writer, SetAttribute(crossterm::style::Attribute::Reset))?;
                 modifier = Modifier::empty();
                 queue!(writer, SetBackgroundColor(to_crossterm_color(clear_bg)))?;
+                fg = Color::Reset;
                 bg = clear_bg;
                 queue!(writer, Clear(crossterm::terminal::ClearType::UntilNewLine))?;
             }
