@@ -1,7 +1,4 @@
-use edtui::{
-    EditorMode, EditorState, EditorTheme, Index2, Lines, SyntaxHighlighter,
-    actions::{MoveDown, MoveUp},
-};
+use edtui::{EditorMode, EditorState, EditorTheme, Index2, Lines, SyntaxHighlighter};
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
@@ -36,13 +33,7 @@ impl PendingStdin {
 }
 
 pub(super) fn build_editor_state(text: &str) -> EditorState {
-    let mut lines = Lines::from(text);
-    if lines.is_empty() {
-        // edtui treats "" as a zero-row buffer, which makes the first normal-mode `o`
-        // create the initial row instead of opening a row below the current one.
-        lines.push(Vec::new());
-    }
-
+    let lines = Lines::from(text);
     let mut editor = EditorState::new(lines);
     editor.mode = EditorMode::Insert;
 
@@ -53,16 +44,6 @@ pub(super) fn build_editor_state(text: &str) -> EditorState {
     editor
 }
 
-pub(super) fn move_editor_to_row(editor: &mut EditorState, target_row: usize) {
-    let max_row = editor.lines.len().saturating_sub(1);
-    let target_row = target_row.min(max_row);
-    let current_row = editor.cursor.row;
-    if target_row >= current_row {
-        editor.execute(MoveDown(target_row - current_row));
-    } else {
-        editor.execute(MoveUp(current_row - target_row));
-    }
-}
 
 pub(super) fn prompt_prefixes(awaiting_input: Option<&PendingStdin>) -> Option<(String, String)> {
     match awaiting_input {
@@ -245,7 +226,7 @@ mod tests {
 
     use super::{
         PendingStdin, build_editor_state, editor_gutter_lines, editor_syntax_highlighter,
-        move_editor_to_row, prompt_gutter_lines, prompt_prefixes, status_label,
+        prompt_gutter_lines, prompt_prefixes, status_label,
     };
 
     #[test]
@@ -347,13 +328,4 @@ mod tests {
         assert_eq!(lines[1].spans[0].content.as_ref(), "   ...: ");
     }
 
-    #[test]
-    fn moves_editor_to_target_row_and_clamps_to_end() {
-        let mut editor = build_editor_state("a\nb\nc");
-        move_editor_to_row(&mut editor, 1);
-        assert_eq!(editor.cursor.row, 1);
-
-        move_editor_to_row(&mut editor, 99);
-        assert_eq!(editor.cursor.row, 2);
-    }
 }

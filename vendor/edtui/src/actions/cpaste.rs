@@ -34,8 +34,10 @@ impl Execute for Paste {
         }
 
         let s = if let Some(stripped) = s.strip_prefix('\n') {
-            state.cursor = Index2::new(min(max_row(state), state.cursor.row + 1), 0);
-            state.lines.insert(RowIndex::new(state.cursor.row), vec![]);
+            if !state.lines.to_string().is_empty() {
+                state.cursor = Index2::new(min(max_row(state), state.cursor.row + 1), 0);
+                state.lines.insert(RowIndex::new(state.cursor.row), vec![]);
+            }
             stripped
         } else {
             state.clamp_column();

@@ -72,7 +72,11 @@ impl EditorState {
     /// let state = EditorState::new(Lines::from("First line\nSecond Line"));
     /// ```
     #[must_use]
-    pub fn new(lines: Lines) -> EditorState {
+    pub fn new(mut lines: Lines) -> EditorState {
+        if lines.is_empty() {
+            lines.push(Vec::new());
+        }
+
         EditorState {
             lines,
             cursor: Index2::new(0, 0),

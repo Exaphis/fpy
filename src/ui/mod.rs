@@ -41,7 +41,7 @@ use self::{
         PendingStdin, build_editor_state, editor_gutter_lines, editor_gutter_width,
         editor_palette_hint, editor_palette_hint_width, editor_status_prefix,
         editor_status_prefix_width, editor_syntax_highlighter, editor_theme, indent_width,
-        move_editor_to_row, status_label,
+        status_label,
     },
     render::{
         build_terminal, editor_status_height, editor_visible_line_count, initial_pane_top,
@@ -97,7 +97,6 @@ const HISTORY_SEARCH_MIN_PANE_HEIGHT: u16 = 18;
 struct EditorController {
     editor: EditorState,
     editor_events: EditorEventHandler,
-    pending_normal_count: String,
     history: Vec<String>,
     history_index: Option<usize>,
     pending_stdin: Option<PendingStdin>,
@@ -108,7 +107,6 @@ impl EditorController {
         Self {
             editor: build_editor_state(""),
             editor_events: EditorEventHandler::default(),
-            pending_normal_count: String::new(),
             history: Vec::new(),
             history_index: None,
             pending_stdin: None,
@@ -163,13 +161,11 @@ impl EditorController {
     fn reset(&mut self) {
         self.editor = build_editor_state("");
         self.editor_events = EditorEventHandler::default();
-        self.pending_normal_count.clear();
     }
 
     fn set_text(&mut self, text: &str) {
         self.editor = build_editor_state(text);
         self.editor_events = EditorEventHandler::default();
-        self.pending_normal_count.clear();
     }
 
     fn take_text(&mut self) -> String {
@@ -248,33 +244,6 @@ impl EditorController {
             .execute(SwitchMode(EditorMode::Insert).chain(LineBreak(1)));
     }
 
-    fn handle_normal_mode_count_prefix(&mut self, key: KeyEvent) -> bool {
-        match key.code {
-            KeyCode::Char(digit)
-                if digit.is_ascii_digit()
-                    && (!self.pending_normal_count.is_empty() || digit != '0') =>
-            {
-                self.pending_normal_count.push(digit);
-                true
-            }
-            KeyCode::Char('G') if !self.pending_normal_count.is_empty() => {
-                let count = self.pending_normal_count.parse::<usize>().ok();
-                self.pending_normal_count.clear();
-                if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
-                    move_editor_to_row(&mut self.editor, target_row);
-                }
-                true
-            }
-            _ => {
-                self.pending_normal_count.clear();
-                false
-            }
-        }
-    }
-
-    fn clear_normal_mode_count(&mut self) {
-        self.pending_normal_count.clear();
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -783,16 +752,6 @@ impl AppUi {
             return self.handle_palette_key(key);
         }
 
-        if self.editor_enabled()
-            && matches!(self.editor.mode(), EditorMode::Normal | EditorMode::Visual)
-        {
-            if self.editor.handle_normal_mode_count_prefix(key) {
-                return None;
-            }
-        } else {
-            self.editor.clear_normal_mode_count();
-        }
-
         match key {
             KeyEvent {
                 code: KeyCode::Char('r'),
@@ -923,7 +882,6 @@ impl AppUi {
     }
 
     fn handle_history_search_key(&mut self, key: KeyEvent) -> Option<UiAction> {
-        self.editor.clear_normal_mode_count();
         match key {
             KeyEvent {
                 code: KeyCode::Esc, ..
@@ -995,7 +953,6 @@ impl AppUi {
     }
 
     fn handle_palette_key(&mut self, key: KeyEvent) -> Option<UiAction> {
-        self.editor.clear_normal_mode_count();
         match key.code {
             KeyCode::Esc => {
                 self.palette_open = false;

@@ -34,7 +34,10 @@ Key design goals:
   `AppUi` state machine and terminal lifecycle.
 
 - [`src/ui/editor.rs`](src/ui/editor.rs)
-  `edtui` integration, gutter rendering, editor setup, and small Vim-specific glue.
+  `edtui` integration, gutter rendering, and editor setup.
+
+- [`vendor/edtui`](vendor/edtui)
+  Vendored `edtui` dependency. Put editor-core fixes and Vim-emulation fixes here instead of stacking local shims in `src/ui/`.
 
 - [`src/ui/render.rs`](src/ui/render.rs)
   Pane geometry, inline viewport sizing, throbber/status helpers.
@@ -111,14 +114,13 @@ Do not trust non-interactive PTY behavior for terminal bugs unless tmux shows th
 
 ## Known Gotchas
 
-- `edtui` treats `Lines::from("")` as a zero-row buffer.
-  `fpy` works around that in [`src/ui/editor.rs`](src/ui/editor.rs) by forcing one empty row for empty input buffers. Do not remove that unless you also fix the underlying editor behavior.
+- The vendored `edtui` should treat empty editor buffers as one blank row via `EditorState::new`. Do not reintroduce an fpy-side workaround for `Lines::from("")` unless the vendored behavior changes.
 
 - Bracketed paste is enabled in [`src/ui/mod.rs`](src/ui/mod.rs). Pasted text is normalized from `\r\n` / `\r` to `\n` before being handed to `edtui`.
 
 - Pane geometry changes must invalidate the custom terminal viewport or stale screen cells remain visible.
 
-- The biggest remaining architectural tension is between `fpy` wanting shell-like inline behavior and `edtui` being a generic `ratatui` editor widget. If more Vim fidelity is needed, a fork of `edtui` may be cleaner than stacking more local workarounds.
+- The biggest remaining architectural tension is between `fpy` wanting shell-like inline behavior and `edtui` being a generic `ratatui` editor widget. Since `edtui` is vendored, prefer making editor-core/Vim-fidelity changes in `vendor/edtui` rather than adding more local workarounds.
 
 - Empty-line visual selection in `edtui` is effectively invisible because selections restyle existing spans, and empty lines have no spans. If that matters, fix it in the editor layer, not with transcript hacks.
 
@@ -126,9 +128,9 @@ Do not trust non-interactive PTY behavior for terminal bugs unless tmux shows th
   (Jupyter completion requests + `fpy`-owned suggestion UI/state) before deciding to fork or vendor `edtui`.
   A fork becomes more attractive if completions need to feel editor-native or if more `edtui`-level fixes pile up.
 
-If `edtui` is forked or vendored later, the current likely candidates are:
+Current likely candidates for future vendored `edtui` work:
 
-- General Vim count prefixes beyond the current local `nG` shim.
+- General Vim count prefixes beyond the current vendored `nG` support.
 - Empty-line visual selection rendering.
 - Empty-buffer semantics so `""` behaves like a one-row blank buffer.
 - Editor-native completion popup positioning relative to the cursor/viewport.
@@ -141,7 +143,7 @@ If `edtui` is forked or vendored later, the current likely candidates are:
 
 - Prefer fixing terminal behavior with the smallest possible change in `ui/`, `insert_history/`, or `custom_terminal.rs`.
 - If a bug only appears when the prompt is near the bottom of the screen, check the bottom-pinned insertion path first.
-- If a bug only appears during editing, check whether it is an `edtui` behavior before adding `fpy`-specific glue.
+- If a bug only appears during editing, check whether it is an `edtui` behavior. Prefer fixing such behavior in `vendor/edtui` before adding `fpy`-specific glue.
 - If you change prompt sizing or viewport logic, rerun tmux repros immediately.
 
 ## Current Direction

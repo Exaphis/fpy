@@ -29,6 +29,7 @@ use std::collections::HashMap;
 #[derive(Clone, Debug)]
 pub struct KeyEventHandler {
     lookup: Vec<KeyInput>,
+    pending_normal_count: String,
     register: HashMap<KeyEventRegister, Action>,
     capture_on_insert: bool,
 }
@@ -45,6 +46,7 @@ impl KeyEventHandler {
     pub fn new(register: HashMap<KeyEventRegister, Action>, capture_on_insert: bool) -> Self {
         Self {
             lookup: Vec::new(),
+            pending_normal_count: String::new(),
             register,
             capture_on_insert,
         }
@@ -56,6 +58,7 @@ impl KeyEventHandler {
         let register: HashMap<KeyEventRegister, Action> = vim_keybindings();
         Self {
             lookup: Vec::new(),
+            pending_normal_count: String::new(),
             register,
             capture_on_insert: false,
         }
@@ -67,6 +70,7 @@ impl KeyEventHandler {
         let register: HashMap<KeyEventRegister, Action> = emacs_keybindings();
         Self {
             lookup: Vec::new(),
+            pending_normal_count: String::new(),
             register,
             capture_on_insert: true,
         }
@@ -103,6 +107,7 @@ impl KeyEventHandler {
     /// starts with the current sequence, the lookup sequence is reset.
     #[must_use]
     fn get(&mut self, c: KeyInput, mode: EditorMode) -> Option<Action> {
+        self.pending_normal_count.clear();
         self.lookup.push(c);
         let key = KeyEventRegister::new(self.lookup.clone(), mode);
 
@@ -961,10 +966,52 @@ impl KeyEventHandler {
             }
         }
 
+        if matches!(mode, EditorMode::Normal | EditorMode::Visual)
+            && self.handle_count_prefix(key_input, state)
+        {
+            return;
+        }
+
         // Else lookup an action from the register
         if let Some(mut action) = self.get(key_input, mode) {
             action.execute(state);
         }
+    }
+
+    fn handle_count_prefix(&mut self, key_input: KeyInput, state: &mut EditorState) -> bool {
+        match key_input.key {
+            input::KeyCode::Char(digit)
+                if digit.is_ascii_digit()
+                    && key_input.modifiers == input::Modifiers::NONE
+                    && (!self.pending_normal_count.is_empty() || digit != '0') =>
+            {
+                self.pending_normal_count.push(digit);
+                true
+            }
+            input::KeyCode::Char('G')
+                if key_input.modifiers == input::Modifiers::SHIFT
+                    && !self.pending_normal_count.is_empty() =>
+            {
+                let count = self.pending_normal_count.parse::<usize>().ok();
+                self.pending_normal_count.clear();
+                if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
+                    move_to_row(state, target_row);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+fn move_to_row(state: &mut EditorState, target_row: usize) {
+    let max_row = state.lines.len().saturating_sub(1);
+    let target_row = target_row.min(max_row);
+    let current_row = state.cursor.row;
+    if target_row >= current_row {
+        MoveDown(target_row - current_row).execute(state);
+    } else {
+        MoveUp(current_row - target_row).execute(state);
     }
 }
 
@@ -1102,5 +1149,19 @@ mod tests {
         // Cursor should have moved to position 6 ('W'), not inserted 'f'
         assert_eq!(state.cursor.col, 6);
         assert_eq!(state.lines.to_string(), "Hello World");
+    }
+
+    #[test]
+    fn vim_count_g_moves_to_one_based_row_and_clamps() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("a\nb\nc"));
+
+        handler.on_event(KeyInput::new('2'), &mut state);
+        handler.on_event(KeyInput::shift('G'), &mut state);
+        assert_eq!(state.cursor.row, 1);
+
+        handler.on_event(KeyInput::new('9'), &mut state);
+        handler.on_event(KeyInput::shift('G'), &mut state);
+        assert_eq!(state.cursor.row, 2);
     }
 }
