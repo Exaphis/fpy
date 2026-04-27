@@ -150,6 +150,10 @@ impl EditorController {
         self.editor.cursor_screen_position()
     }
 
+    fn first_visible_line(&self) -> usize {
+        self.editor.viewport_offset().1
+    }
+
     fn visible_line_count(&self) -> usize {
         editor_visible_line_count(self.editor.lines.len())
     }
@@ -608,13 +612,6 @@ impl AppUi {
                             Constraint::Min(1),
                         ])
                         .areas(content_area);
-                        let gutter_lines = editor_gutter_lines(
-                            awaiting_input.as_ref(),
-                            gutter_area.height as usize,
-                            visible_lines,
-                        );
-                        frame.render_widget(Paragraph::new(gutter_lines), gutter_area);
-
                         let editor_view = EditorView::new(editor.editor_mut())
                             .theme(editor_theme())
                             .tab_width(indent_width())
@@ -622,6 +619,14 @@ impl AppUi {
                             .syntax_highlighter(editor_syntax_highlighter())
                             .single_line(false);
                         frame.render_widget(editor_view, content_area);
+
+                        let gutter_lines = editor_gutter_lines(
+                            awaiting_input.as_ref(),
+                            gutter_area.height as usize,
+                            visible_lines,
+                            editor.first_visible_line(),
+                        );
+                        frame.render_widget(Paragraph::new(gutter_lines), gutter_area);
                     }
                 }
 

@@ -44,7 +44,6 @@ pub(super) fn build_editor_state(text: &str) -> EditorState {
     editor
 }
 
-
 pub(super) fn prompt_prefixes(awaiting_input: Option<&PendingStdin>) -> Option<(String, String)> {
     match awaiting_input {
         Some(stdin) if stdin.prompt().is_empty() && !stdin.password() => None,
@@ -79,13 +78,14 @@ pub(super) fn editor_gutter_lines(
     awaiting_input: Option<&PendingStdin>,
     height: usize,
     visible_lines: usize,
+    first_visible_line: usize,
 ) -> Vec<Line<'static>> {
     if let Some((prompt_prefix, continuation_prefix)) = prompt_prefixes(awaiting_input) {
         prompt_gutter_lines(&prompt_prefix, &continuation_prefix, height)
     } else if awaiting_input.is_some() {
         Vec::new()
     } else {
-        line_number_gutter_lines(height, visible_lines)
+        line_number_gutter_lines(height, visible_lines, first_visible_line)
     }
 }
 
@@ -198,11 +198,15 @@ fn line_number_gutter_width(visible_lines: usize) -> u16 {
     u16::try_from(digits + 1).unwrap_or(u16::MAX).max(2)
 }
 
-fn line_number_gutter_lines(height: usize, visible_lines: usize) -> Vec<Line<'static>> {
+fn line_number_gutter_lines(
+    height: usize,
+    visible_lines: usize,
+    first_visible_line: usize,
+) -> Vec<Line<'static>> {
     let width = usize::from(line_number_gutter_width(visible_lines)).saturating_sub(1);
     (0..height.max(1))
         .map(|index| {
-            let line_number = index + 1;
+            let line_number = first_visible_line + index + 1;
             Line::from(Span::styled(
                 format!("{line_number:>width$} ", width = width),
                 Style::default().fg(Color::DarkGray),
@@ -262,24 +266,32 @@ mod tests {
 
     #[test]
     fn uses_line_numbers_for_normal_editor_gutter() {
-        let lines = editor_gutter_lines(None, 2, 2);
+        let lines = editor_gutter_lines(None, 2, 2, 0);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].spans[0].content.as_ref(), "1 ");
         assert_eq!(lines[1].spans[0].content.as_ref(), "2 ");
     }
 
     #[test]
+    fn offsets_line_numbers_by_first_visible_line() {
+        let lines = editor_gutter_lines(None, 2, 12, 9);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "10 ");
+        assert_eq!(lines[1].spans[0].content.as_ref(), "11 ");
+    }
+
+    #[test]
     fn uses_no_gutter_for_empty_stdin_prompt() {
         let stdin = PendingStdin::new("".to_string(), false);
         assert_eq!(super::editor_gutter_width(Some(&stdin), 2), 0);
-        assert!(editor_gutter_lines(Some(&stdin), 2, 2).is_empty());
+        assert!(editor_gutter_lines(Some(&stdin), 2, 2, 0).is_empty());
     }
 
     #[test]
     fn uses_prompt_gutter_for_nonempty_stdin_prompt() {
         let stdin = PendingStdin::new("(Pdb) ".to_string(), false);
         assert_eq!(super::editor_gutter_width(Some(&stdin), 2), 6);
-        let lines = editor_gutter_lines(Some(&stdin), 2, 2);
+        let lines = editor_gutter_lines(Some(&stdin), 2, 2, 0);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].spans[0].content.as_ref(), "(Pdb) ");
         assert_eq!(lines[1].spans[0].content.as_ref(), "      ");
@@ -327,5 +339,4 @@ mod tests {
         assert_eq!(lines[0].spans[0].content.as_ref(), "In [1]: ");
         assert_eq!(lines[1].spans[0].content.as_ref(), "   ...: ");
     }
-
 }
