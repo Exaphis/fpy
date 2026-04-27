@@ -1,3 +1,4 @@
+use crate::state::search::SearchDirection;
 use crate::EditorState;
 
 use super::Execute;
@@ -54,7 +55,11 @@ impl Execute for FindNext {
     /// Executes the command, finding the next search match and updating the cursor position.
     /// Switches to normal mode.
     fn execute(&mut self, state: &mut EditorState) {
-        if let Some(index) = state.search.next() {
+        let index = match state.search.direction {
+            SearchDirection::Forward => state.search.next(),
+            SearchDirection::Backward => state.search.previous(),
+        };
+        if let Some(index) = index {
             state.cursor = *index;
         }
     }
@@ -68,7 +73,11 @@ impl Execute for FindPrevious {
     /// Executes the command, finding the previous search match and updating the cursor position.
     /// Switches to normal mode.
     fn execute(&mut self, state: &mut EditorState) {
-        if let Some(index) = state.search.previous() {
+        let index = match state.search.direction {
+            SearchDirection::Forward => state.search.previous(),
+            SearchDirection::Backward => state.search.next(),
+        };
+        if let Some(index) = index {
             state.cursor = *index;
         }
     }
@@ -95,7 +104,18 @@ pub struct StartSearch;
 impl Execute for StartSearch {
     /// Executes the command, starting the search state.
     fn execute(&mut self, state: &mut EditorState) {
-        state.search.start(state.cursor);
+        state.search.start(state.cursor, SearchDirection::Forward);
+    }
+}
+
+/// Command to clear to start of the search and switch into reverse search mode.
+#[derive(Clone, Debug)]
+pub struct StartBackwardSearch;
+
+impl Execute for StartBackwardSearch {
+    /// Executes the command, starting the reverse search state.
+    fn execute(&mut self, state: &mut EditorState) {
+        state.search.start(state.cursor, SearchDirection::Backward);
     }
 }
 /// Command to clear the search state.

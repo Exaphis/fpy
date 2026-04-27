@@ -318,6 +318,7 @@ pub mod actions;
 pub mod clipboard;
 mod debug;
 pub mod events;
+pub(crate) mod vim;
 #[cfg(feature = "system-editor")]
 pub use actions::system_editor;
 mod helper;

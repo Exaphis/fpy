@@ -4,7 +4,6 @@ pub mod delete;
 pub mod insert;
 pub mod motion;
 pub mod search;
-pub mod select;
 #[cfg(feature = "system-editor")]
 pub mod system_editor;
 use crate::state::selection::Selection;
@@ -16,26 +15,31 @@ use motion::{MoveToFirstRow, MoveToLastRow};
 #[cfg(feature = "system-editor")]
 pub use system_editor::OpenSystemEditor;
 
-pub use self::cpaste::{CopyLine, CopySelection, Paste};
+pub use self::cpaste::{CopyLine, Paste};
 pub use self::delete::{
-    DeleteChar, DeleteCharForward, DeleteLine, DeleteSelection, DeleteToFirstCharOfLine,
-    DeleteWordBackward, DeleteWordForward, JoinLineWithLineBelow, RemoveChar, ReplaceChar,
+    ChangeBigWordBackward, ChangeBigWordForward, ChangeLine, ChangeLineDown, ChangeLineUp,
+    ChangeToBigWordEnd, ChangeToEndOfLine, ChangeToFirstLine, ChangeToLastLine,
+    ChangeToStartOfLine, ChangeToWordEnd, ChangeWordBackward, ChangeWordForward,
+    CopyBigWordBackward, CopyBigWordForward, CopyLineDown, CopyLineUp, CopyToBigWordEnd,
+    CopyToEndOfLine, CopyToFirstLine, CopyToLastLine, CopyToStartOfLine, CopyToWordEnd,
+    CopyWordBackward, CopyWordForward, DeleteBigWordBackward, DeleteBigWordForward, DeleteChar,
+    DeleteCharForward, DeleteLine, DeleteLineDown, DeleteLineUp, DeleteToBigWordEnd,
+    DeleteToFirstCharOfLine, DeleteToFirstLine, DeleteToLastLine, DeleteToStartOfLine,
+    DeleteToWordEnd, DeleteWordBackward, DeleteWordForward, JoinLineWithLineBelow, RemoveChar,
+    ReplaceChar,
 };
 pub use self::insert::{AppendNewline, InsertChar, InsertNewline, LineBreak};
 pub use self::motion::{
-    MoveBackward, MoveDown, MoveForward, MoveHalfPageDown, MoveHalfPageUp, MovePageDown,
-    MovePageUp, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp,
-    MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+    MoveBackward, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
+    MoveForward, MoveHalfPageDown, MoveHalfPageUp, MovePageDown, MovePageUp, MoveToEndOfLine,
+    MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward,
+    MoveWordForward, MoveWordForwardToEndOfWord,
 };
-use self::search::StartSearch;
 pub use self::search::{
     AppendCharToSearch, FindFirst, FindNext, FindPrevious, RemoveCharFromSearch,
     SelectCurrentSearch, StopSearch,
 };
-pub use self::select::{
-    ChangeInnerBetween, ChangeInnerWord, ChangeSelection, SelectInnerBetween, SelectInnerWord,
-    SelectLine,
-};
+use self::search::{StartBackwardSearch, StartSearch};
 
 #[enum_dispatch(Execute)]
 #[derive(Clone, Debug)]
@@ -48,6 +52,9 @@ pub enum Action {
     MoveWordForward(MoveWordForward),
     MoveWordForwardToEndOfWord(MoveWordForwardToEndOfWord),
     MoveWordBackward(MoveWordBackward),
+    MoveBigWordForward(MoveBigWordForward),
+    MoveBigWordForwardToEndOfWord(MoveBigWordForwardToEndOfWord),
+    MoveBigWordBackward(MoveBigWordBackward),
     MoveToStartOfLine(MoveToStartOfLine),
     MoveToFirst(MoveToFirst),
     MoveToEndOfLine(MoveToEndOfLine),
@@ -67,26 +74,53 @@ pub enum Action {
     DeleteChar(DeleteChar),
     DeleteCharForward(DeleteCharForward),
     DeleteLine(DeleteLine),
+    ChangeLine(ChangeLine),
     DeleteToFirstCharOfLine(DeleteToFirstCharOfLine),
     DeleteToEndOfLine(DeleteToEndOfLine),
+    ChangeToEndOfLine(ChangeToEndOfLine),
+    CopyToEndOfLine(CopyToEndOfLine),
     DeleteWordForward(DeleteWordForward),
+    ChangeWordForward(ChangeWordForward),
+    CopyWordForward(CopyWordForward),
+    DeleteToWordEnd(DeleteToWordEnd),
+    ChangeToWordEnd(ChangeToWordEnd),
+    CopyToWordEnd(CopyToWordEnd),
     DeleteWordBackward(DeleteWordBackward),
-    DeleteSelection(DeleteSelection),
+    ChangeWordBackward(ChangeWordBackward),
+    CopyWordBackward(CopyWordBackward),
+    DeleteBigWordForward(DeleteBigWordForward),
+    ChangeBigWordForward(ChangeBigWordForward),
+    CopyBigWordForward(CopyBigWordForward),
+    DeleteToBigWordEnd(DeleteToBigWordEnd),
+    ChangeToBigWordEnd(ChangeToBigWordEnd),
+    CopyToBigWordEnd(CopyToBigWordEnd),
+    DeleteBigWordBackward(DeleteBigWordBackward),
+    ChangeBigWordBackward(ChangeBigWordBackward),
+    CopyBigWordBackward(CopyBigWordBackward),
+    DeleteToStartOfLine(DeleteToStartOfLine),
+    ChangeToStartOfLine(ChangeToStartOfLine),
+    CopyToStartOfLine(CopyToStartOfLine),
+    DeleteLineDown(DeleteLineDown),
+    ChangeLineDown(ChangeLineDown),
+    CopyLineDown(CopyLineDown),
+    DeleteLineUp(DeleteLineUp),
+    ChangeLineUp(ChangeLineUp),
+    CopyLineUp(CopyLineUp),
+    DeleteToLastLine(DeleteToLastLine),
+    ChangeToLastLine(ChangeToLastLine),
+    CopyToLastLine(CopyToLastLine),
+    DeleteToFirstLine(DeleteToFirstLine),
+    ChangeToFirstLine(ChangeToFirstLine),
+    CopyToFirstLine(CopyToFirstLine),
     JoinLineWithLineBelow(JoinLineWithLineBelow),
-    SelectInnerBetween(SelectInnerBetween),
-    SelectInnerWord(SelectInnerWord),
-    ChangeInnerBetween(ChangeInnerBetween),
-    ChangeInnerWord(ChangeInnerWord),
-    ChangeSelection(ChangeSelection),
-    SelectLine(SelectLine),
     Undo(Undo),
     Redo(Redo),
     Paste(Paste),
     PasteOverSelection(PasteOverSelection),
-    CopySelection(CopySelection),
     CopyLine(CopyLine),
     Composed(Composed),
     StartSearch(StartSearch),
+    StartBackwardSearch(StartBackwardSearch),
     StopSearch(StopSearch),
     FindFirst(FindFirst),
     FindNext(FindNext),

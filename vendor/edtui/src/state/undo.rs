@@ -52,6 +52,7 @@ impl EditorState {
             cursor: self.cursor,
         };
         self.undo.push(editor_state);
+        self.redo = Stack::new();
     }
 
     pub fn undo(&mut self) {

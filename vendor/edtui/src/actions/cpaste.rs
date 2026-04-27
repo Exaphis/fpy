@@ -71,18 +71,6 @@ impl Execute for PasteOverSelection {
 }
 
 #[derive(Clone, Debug)]
-pub struct CopySelection;
-
-impl Execute for CopySelection {
-    fn execute(&mut self, state: &mut EditorState) {
-        if let Some(s) = &state.selection {
-            state.clip.set_text(s.copy_from(&state.lines).into());
-            state.selection = None;
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct CopyLine;
 
 impl Execute for CopyLine {
@@ -97,7 +85,7 @@ impl Execute for CopyLine {
 #[cfg(test)]
 mod tests {
     use crate::actions::Undo;
-    use crate::clipboard::InternalClipboard;
+    use crate::clipboard::{ClipboardTrait, InternalClipboard};
     use crate::state::selection::Selection;
     use crate::Index2;
     use crate::Lines;
@@ -112,10 +100,7 @@ mod tests {
     #[test]
     fn test_copy_paste() {
         let mut state = test_state();
-        let selection = Selection::new(Index2::new(0, 0), Index2::new(0, 2));
-        state.selection = Some(selection);
-
-        CopySelection.execute(&mut state);
+        state.clip.set_text("Hel".to_string());
         Paste.execute(&mut state);
 
         assert_eq!(state.cursor, Index2::new(0, 3));

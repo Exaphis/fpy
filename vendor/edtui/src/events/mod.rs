@@ -1,4 +1,4 @@
-mod key;
+pub(crate) mod key;
 #[cfg(feature = "mouse-support")]
 pub(crate) mod mouse;
 pub(crate) mod paste;

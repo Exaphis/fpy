@@ -1,7 +1,7 @@
 //! The editors state
 pub mod highlight;
 pub mod mode;
-mod search;
+pub(crate) mod search;
 pub mod selection;
 mod undo;
 mod view;

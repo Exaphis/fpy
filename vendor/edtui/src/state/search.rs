@@ -6,12 +6,20 @@ use super::selection::Selection;
 
 /// Represents the state of a search operation
 /// Including the search pattern, matched indices and selected index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum SearchDirection {
+    #[default]
+    Forward,
+    Backward,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct SearchState {
     pub(crate) start_cursor: Index2,
     pub(crate) pattern: String,
     pub(crate) matches: Vec<Index2>,
     pub(crate) selected_index: Option<usize>,
+    pub(crate) direction: SearchDirection,
 }
 
 impl SearchState {
@@ -19,14 +27,16 @@ impl SearchState {
         self.pattern.len()
     }
 
-    pub(crate) fn start(&mut self, start_cursor: Index2) {
+    pub(crate) fn start(&mut self, start_cursor: Index2, direction: SearchDirection) {
         self.clear();
         self.start_cursor = start_cursor;
+        self.direction = direction;
     }
 
     pub(crate) fn clear(&mut self) {
         self.pattern.clear();
         self.matches.clear();
+        self.selected_index = None;
     }
 
     pub(crate) fn trigger_search(&mut self, lines: &Lines) {
@@ -46,6 +56,13 @@ impl SearchState {
     }
 
     pub(crate) fn first(&mut self) -> Option<&Index2> {
+        match self.direction {
+            SearchDirection::Forward => self.first_forward(),
+            SearchDirection::Backward => self.first_backward(),
+        }
+    }
+
+    fn first_forward(&mut self) -> Option<&Index2> {
         for (i, index) in self.matches.iter().enumerate() {
             if index >= &self.start_cursor {
                 self.selected_index = Some(i);
@@ -55,6 +72,22 @@ impl SearchState {
         match self.matches.first() {
             Some(index) => {
                 self.selected_index = Some(0);
+                Some(index)
+            }
+            None => None,
+        }
+    }
+
+    fn first_backward(&mut self) -> Option<&Index2> {
+        for (i, index) in self.matches.iter().enumerate().rev() {
+            if index <= &self.start_cursor {
+                self.selected_index = Some(i);
+                return Some(index);
+            }
+        }
+        match self.matches.last() {
+            Some(index) => {
+                self.selected_index = Some(self.matches.len() - 1);
                 Some(index)
             }
             None => None,

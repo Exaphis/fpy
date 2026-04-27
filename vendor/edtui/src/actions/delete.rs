@@ -2,10 +2,14 @@ use jagged::index::RowIndex;
 
 use super::Execute;
 use crate::{
-    actions::motion::CharacterClass,
     clipboard::ClipboardTrait,
-    helper::{is_out_of_bounds, max_col_insert, skip_whitespace, skip_whitespace_rev},
+    helper::{is_out_of_bounds, max_col_insert},
     state::selection::Selection,
+    vim::{
+        motion as vim_motion,
+        operator::{self as vim_operator, Operator},
+        range::TextRange,
+    },
     EditorState, Index2, Lines,
 };
 
@@ -138,7 +142,7 @@ fn delete_char_forward(lines: &mut Lines, index: &mut Index2) {
     let _ = lines.remove(*index);
 }
 
-/// Deletes from cursor to the end of the current word (Emacs Alt+d).
+/// Deletes from cursor to the end of the current word (Emacs Alt+d / Vim dw).
 #[derive(Clone, Debug, Copy)]
 pub struct DeleteWordForward(pub usize);
 
@@ -155,32 +159,163 @@ impl Execute for DeleteWordForward {
 }
 
 fn delete_word_forward(state: &mut EditorState) {
-    let start = state.cursor;
-    let start_char = state.lines.get(start);
-
-    if start_char.is_none() {
+    let Some(range) = vim_motion::word_forward_range(state) else {
         if state.cursor.row + 1 < state.lines.len() {
             state.lines.join_lines(state.cursor.row);
         }
         return;
-    }
-
-    let mut end = start;
-    let start_class = CharacterClass::from(start_char);
-
-    for (ch, idx) in state.lines.iter().from(start) {
-        if CharacterClass::from(ch) != start_class {
-            break;
-        }
-        end = idx;
-    }
-    end.col += 1;
-
-    skip_whitespace(&state.lines, &mut end);
-    delete_range(&mut state.lines, start, end, &mut state.clip);
+    };
+    vim_operator::apply_operator_without_capture(state, Operator::Delete, range);
 }
 
-/// Deletes from cursor backward to start of previous word (Emacs Alt+Backspace).
+macro_rules! range_action {
+    ($name:ident, $range_fn:ident, $op:expr, counted) => {
+        #[derive(Clone, Debug, Copy)]
+        pub struct $name(pub usize);
+        impl Execute for $name {
+            fn execute(&mut self, state: &mut EditorState) {
+                if matches!($op, Operator::Delete | Operator::Change) {
+                    state.capture();
+                }
+                for _ in 0..self.0 {
+                    if let Some(range) = vim_motion::$range_fn(state) {
+                        vim_operator::apply_operator_without_capture(state, $op, range);
+                    }
+                }
+            }
+        }
+    };
+    ($name:ident, $range_fn:ident, $op:expr) => {
+        #[derive(Clone, Debug, Copy)]
+        pub struct $name(pub usize);
+        impl Execute for $name {
+            fn execute(&mut self, state: &mut EditorState) {
+                if let Some(range) = vim_motion::$range_fn(state) {
+                    vim_operator::apply_operator(state, $op, range);
+                }
+            }
+        }
+    };
+}
+
+range_action!(
+    DeleteBigWordForward,
+    big_word_forward_range,
+    Operator::Delete,
+    counted
+);
+range_action!(
+    ChangeBigWordForward,
+    big_word_forward_range,
+    Operator::Change,
+    counted
+);
+range_action!(CopyBigWordForward, big_word_forward_range, Operator::Yank);
+range_action!(
+    DeleteToBigWordEnd,
+    big_word_end_range,
+    Operator::Delete,
+    counted
+);
+range_action!(
+    ChangeToBigWordEnd,
+    big_word_end_range,
+    Operator::Change,
+    counted
+);
+range_action!(CopyToBigWordEnd, big_word_end_range, Operator::Yank);
+range_action!(
+    DeleteBigWordBackward,
+    big_word_backward_range,
+    Operator::Delete,
+    counted
+);
+range_action!(
+    ChangeBigWordBackward,
+    big_word_backward_range,
+    Operator::Change,
+    counted
+);
+range_action!(CopyBigWordBackward, big_word_backward_range, Operator::Yank);
+
+#[derive(Clone, Debug, Copy)]
+pub struct DeleteToWordEnd(pub usize);
+
+impl Execute for DeleteToWordEnd {
+    fn execute(&mut self, state: &mut EditorState) {
+        if state.lines.is_empty() {
+            return;
+        }
+        state.capture();
+        for _ in 0..self.0 {
+            delete_to_word_end(state);
+        }
+    }
+}
+
+fn delete_to_word_end(state: &mut EditorState) {
+    if let Some(range) = vim_motion::word_end_range(state) {
+        vim_operator::apply_operator_without_capture(state, Operator::Delete, range);
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeToWordEnd(pub usize);
+
+impl Execute for ChangeToWordEnd {
+    fn execute(&mut self, state: &mut EditorState) {
+        if state.lines.is_empty() {
+            return;
+        }
+        state.capture();
+        for _ in 0..self.0 {
+            if let Some(range) = vim_motion::word_end_range(state) {
+                vim_operator::apply_operator_without_capture(state, Operator::Change, range);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyToWordEnd(pub usize);
+
+impl Execute for CopyToWordEnd {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::word_end_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeWordForward(pub usize);
+
+impl Execute for ChangeWordForward {
+    fn execute(&mut self, state: &mut EditorState) {
+        if state.lines.is_empty() {
+            return;
+        }
+        state.capture();
+        for _ in 0..self.0 {
+            if let Some(range) = vim_motion::word_forward_range(state) {
+                vim_operator::apply_operator_without_capture(state, Operator::Change, range);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyWordForward(pub usize);
+
+impl Execute for CopyWordForward {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::word_forward_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
+}
+
+/// Deletes from cursor backward to start of previous word (Emacs Alt+Backspace / Vim db).
 #[derive(Clone, Debug, Copy)]
 pub struct DeleteWordBackward(pub usize);
 
@@ -197,57 +332,37 @@ impl Execute for DeleteWordBackward {
 }
 
 fn delete_word_backward(state: &mut EditorState) {
-    let end = state.cursor;
-
-    if end.row == 0 && end.col == 0 {
-        return;
+    if let Some(range) = vim_motion::word_backward_range(state) {
+        vim_operator::apply_operator_without_capture(state, Operator::Delete, range);
     }
-
-    if end.col == 0 {
-        state.cursor.row -= 1;
-        state.cursor.col = state.lines.len_col(state.cursor.row).unwrap_or(0);
-        state.lines.join_lines(state.cursor.row);
-        return;
-    }
-
-    let mut start = Index2::new(end.row, end.col.saturating_sub(1));
-    skip_whitespace_rev(&state.lines, &mut start);
-    let start_class = CharacterClass::from(state.lines.get(start));
-
-    for (ch, idx) in state.lines.iter().from(start).rev() {
-        if idx.col == 0 {
-            start = idx;
-            break;
-        }
-        if CharacterClass::from(ch) != start_class {
-            break;
-        }
-        start = idx;
-    }
-
-    delete_range(&mut state.lines, start, end, &mut state.clip);
-    state.cursor = start;
 }
 
-fn delete_range(
-    lines: &mut Lines,
-    start: Index2,
-    end: Index2,
-    clip: &mut crate::clipboard::Clipboard,
-) {
-    if start.row != end.row || start.col >= end.col {
-        return;
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeWordBackward(pub usize);
+
+impl Execute for ChangeWordBackward {
+    fn execute(&mut self, state: &mut EditorState) {
+        if state.lines.is_empty() {
+            return;
+        }
+        state.capture();
+        for _ in 0..self.0 {
+            if let Some(range) = vim_motion::word_backward_range(state) {
+                vim_operator::apply_operator_without_capture(state, Operator::Change, range);
+            }
+        }
     }
+}
 
-    let Some(row) = lines.get_mut(RowIndex::new(start.row)) else {
-        return;
-    };
+#[derive(Clone, Debug, Copy)]
+pub struct CopyWordBackward(pub usize);
 
-    let end_col = end.col.min(row.len());
-    let start_col = start.col.min(end_col);
-
-    let deleted: String = row.drain(start_col..end_col).collect();
-    clip.set_text(deleted);
+impl Execute for CopyWordBackward {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::word_backward_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
 }
 
 /// Deletes the current line.
@@ -256,16 +371,209 @@ pub struct DeleteLine(pub usize);
 
 impl Execute for DeleteLine {
     fn execute(&mut self, state: &mut EditorState) {
-        state.capture();
-        for _ in 0..self.0 {
-            if state.cursor.row >= state.lines.len() {
-                break;
-            }
-            let row_index = RowIndex::new(state.cursor.row);
-            let deleted_line = state.lines.remove(row_index).iter().collect::<String>();
-            state.clip.set_text(String::from('\n') + &deleted_line);
-            state.cursor.col = 0;
-            state.cursor.row = state.cursor.row.min(state.lines.len().saturating_sub(1));
+        if state.lines.is_empty() {
+            return;
+        }
+        let end = state.cursor.row.saturating_add(self.0.saturating_sub(1));
+        vim_operator::apply_operator(
+            state,
+            Operator::Delete,
+            TextRange::linewise(state.cursor.row, end),
+        );
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeLine(pub usize);
+
+impl Execute for ChangeLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if state.lines.is_empty() {
+            return;
+        }
+        let start = state.cursor.row;
+        let end = start.saturating_add(self.0.saturating_sub(1));
+        vim_operator::apply_operator(state, Operator::Change, TextRange::linewise(start, end));
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct DeleteToStartOfLine;
+
+impl Execute for DeleteToStartOfLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        delete_to_start_of_line(state, true, false);
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeToStartOfLine;
+
+impl Execute for ChangeToStartOfLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        delete_to_start_of_line(state, true, true);
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyToStartOfLine;
+
+impl Execute for CopyToStartOfLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_start_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
+}
+
+fn delete_to_start_of_line(state: &mut EditorState, capture: bool, insert: bool) {
+    if let Some(range) = vim_motion::line_start_range(state) {
+        if capture {
+            vim_operator::apply_operator(
+                state,
+                if insert {
+                    Operator::Change
+                } else {
+                    Operator::Delete
+                },
+                range,
+            );
+        } else {
+            vim_operator::apply_operator_without_capture(
+                state,
+                if insert {
+                    Operator::Change
+                } else {
+                    Operator::Delete
+                },
+                range,
+            );
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct DeleteLineDown(pub usize);
+impl Execute for DeleteLineDown {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_down_range(state, self.0) {
+            vim_operator::apply_operator(state, Operator::Delete, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeLineDown(pub usize);
+impl Execute for ChangeLineDown {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_down_range(state, self.0) {
+            vim_operator::apply_operator(state, Operator::Change, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyLineDown(pub usize);
+impl Execute for CopyLineDown {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_down_range(state, self.0) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct DeleteLineUp(pub usize);
+impl Execute for DeleteLineUp {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_up_range(state, self.0) {
+            vim_operator::apply_operator(state, Operator::Delete, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeLineUp(pub usize);
+impl Execute for ChangeLineUp {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_up_range(state, self.0) {
+            vim_operator::apply_operator(state, Operator::Change, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyLineUp(pub usize);
+impl Execute for CopyLineUp {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_up_range(state, self.0) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct DeleteToLastLine;
+
+impl Execute for DeleteToLastLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::to_last_line_range(state) {
+            vim_operator::apply_operator(state, Operator::Delete, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeToLastLine;
+
+impl Execute for ChangeToLastLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::to_last_line_range(state) {
+            vim_operator::apply_operator(state, Operator::Change, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyToLastLine;
+
+impl Execute for CopyToLastLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::to_last_line_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct DeleteToFirstLine;
+
+impl Execute for DeleteToFirstLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::to_first_line_range(state) {
+            vim_operator::apply_operator(state, Operator::Delete, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeToFirstLine;
+
+impl Execute for ChangeToFirstLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::to_first_line_range(state) {
+            vim_operator::apply_operator(state, Operator::Change, range);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyToFirstLine;
+
+impl Execute for CopyToFirstLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::to_first_line_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
         }
     }
 }
@@ -307,31 +615,53 @@ pub struct DeleteToEndOfLine;
 
 impl Execute for DeleteToEndOfLine {
     fn execute(&mut self, state: &mut EditorState) {
-        if is_out_of_bounds(&state.lines, &state.cursor) {
-            return;
-        }
-        state.capture();
-        let Some(row) = state.lines.get_mut(RowIndex::new(state.cursor.row)) else {
-            return;
-        };
-        let deleted_chars = row.drain(state.cursor.col..);
-        state.cursor.col = state.cursor.col.saturating_sub(1);
-        state.clip.set_text(deleted_chars.collect());
+        delete_to_end_of_line(state, true, false);
     }
 }
 
-/// Deletes the current selection.
-#[derive(Clone, Debug)]
-pub struct DeleteSelection;
+#[derive(Clone, Debug, Copy)]
+pub struct ChangeToEndOfLine;
 
-impl Execute for DeleteSelection {
+impl Execute for ChangeToEndOfLine {
     fn execute(&mut self, state: &mut EditorState) {
-        if let Some(selection) = state.selection.take() {
-            state.capture();
-            let drained = delete_selection(state, &selection);
-            state.clip.set_text(drained.into());
+        delete_to_end_of_line(state, true, true);
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct CopyToEndOfLine;
+
+impl Execute for CopyToEndOfLine {
+    fn execute(&mut self, state: &mut EditorState) {
+        if let Some(range) = vim_motion::line_end_range(state) {
+            vim_operator::apply_operator(state, Operator::Yank, range);
         }
-        state.selection = None;
+    }
+}
+
+fn delete_to_end_of_line(state: &mut EditorState, capture: bool, insert: bool) {
+    if let Some(range) = vim_motion::line_end_range(state) {
+        if capture {
+            vim_operator::apply_operator(
+                state,
+                if insert {
+                    Operator::Change
+                } else {
+                    Operator::Delete
+                },
+                range,
+            );
+        } else {
+            vim_operator::apply_operator_without_capture(
+                state,
+                if insert {
+                    Operator::Change
+                } else {
+                    Operator::Delete
+                },
+                range,
+            );
+        }
     }
 }
 
@@ -457,7 +787,8 @@ mod tests {
 
         DeleteLine(1).execute(&mut state);
         assert_eq!(state.cursor, Index2::new(0, 0));
-        assert_eq!(state.lines, Lines::from(""));
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.lines.len(), 1);
     }
 
     #[test]
@@ -490,9 +821,9 @@ mod tests {
         let mut state = test_state();
         let st = Index2::new(0, 1);
         let en = Index2::new(2, 0);
-        state.selection = Some(Selection::new(st, en));
+        let selection = Selection::new(st, en);
 
-        DeleteSelection.execute(&mut state);
+        delete_selection(&mut state, &selection);
         assert_eq!(state.cursor, Index2::new(0, 1));
         assert_eq!(state.lines, Lines::from("H23."));
     }
@@ -502,9 +833,9 @@ mod tests {
         let mut state = EditorState::new(Lines::from("123.\nHello World!\n456."));
         let st = Index2::new(0, 5);
         let en = Index2::new(2, 10);
-        state.selection = Some(Selection::new(st, en));
+        let selection = Selection::new(st, en);
 
-        DeleteSelection.execute(&mut state);
+        delete_selection(&mut state, &selection);
         assert_eq!(state.cursor, Index2::new(0, 3));
         assert_eq!(state.lines, Lines::from("123."));
     }
@@ -512,9 +843,9 @@ mod tests {
     #[test]
     fn test_delete_line_selection_clamps_cursor_to_buffer_end() {
         let mut state = EditorState::new(Lines::from("one\ntwo\nthree"));
-        state.selection = Some(Selection::new(Index2::new(1, 0), Index2::new(2, 4)).line_mode());
+        let selection = Selection::new(Index2::new(1, 0), Index2::new(2, 4)).line_mode();
 
-        DeleteSelection.execute(&mut state);
+        delete_selection(&mut state, &selection);
         assert_eq!(state.cursor, Index2::new(0, 0));
         assert_eq!(state.lines, Lines::from("one"));
     }

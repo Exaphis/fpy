@@ -9,19 +9,20 @@ use crate::actions::delete::{
 use crate::actions::motion::{
     MoveHalfPageDown, MovePageDown, MovePageUp, MoveToFirstRow, MoveToLastRow,
 };
-use crate::actions::search::StartSearch;
+use crate::actions::search::{StartBackwardSearch, StartSearch};
 #[cfg(feature = "system-editor")]
 use crate::actions::OpenSystemEditor;
 use crate::actions::{
-    Action, AppendCharToSearch, AppendNewline, Chainable, ChangeInnerBetween, ChangeInnerWord,
-    ChangeSelection, CopyLine, CopySelection, DeleteChar, DeleteLine, DeleteSelection, Execute,
+    Action, AppendCharToSearch, AppendNewline, Chainable, ChangeToEndOfLine, DeleteChar, Execute,
     FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, JoinLineWithLineBelow, LineBreak,
-    MoveBackward, MoveDown, MoveForward, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst,
-    MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward,
-    MoveWordForwardToEndOfWord, Paste, Redo, RemoveChar, RemoveCharFromSearch, SelectCurrentSearch,
-    SelectInnerBetween, SelectInnerWord, SelectLine, StopSearch, SwitchMode, Undo,
+    MoveBackward, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
+    MoveForward, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket,
+    MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+    Paste, Redo, RemoveChar, RemoveCharFromSearch, SelectCurrentSearch, StopSearch, SwitchMode,
+    Undo,
 };
 use crate::events::KeyInput;
+use crate::vim::{command::VimCommandContext, state::VimCommandState};
 use crate::{EditorMode, EditorState};
 use crossterm::event::KeyCode;
 use std::collections::HashMap;
@@ -29,7 +30,7 @@ use std::collections::HashMap;
 #[derive(Clone, Debug)]
 pub struct KeyEventHandler {
     lookup: Vec<KeyInput>,
-    pending_normal_count: String,
+    vim: VimCommandState,
     register: HashMap<KeyEventRegister, Action>,
     capture_on_insert: bool,
 }
@@ -46,7 +47,7 @@ impl KeyEventHandler {
     pub fn new(register: HashMap<KeyEventRegister, Action>, capture_on_insert: bool) -> Self {
         Self {
             lookup: Vec::new(),
-            pending_normal_count: String::new(),
+            vim: VimCommandState::default(),
             register,
             capture_on_insert,
         }
@@ -58,7 +59,7 @@ impl KeyEventHandler {
         let register: HashMap<KeyEventRegister, Action> = vim_keybindings();
         Self {
             lookup: Vec::new(),
-            pending_normal_count: String::new(),
+            vim: VimCommandState::default(),
             register,
             capture_on_insert: false,
         }
@@ -70,7 +71,7 @@ impl KeyEventHandler {
         let register: HashMap<KeyEventRegister, Action> = emacs_keybindings();
         Self {
             lookup: Vec::new(),
-            pending_normal_count: String::new(),
+            vim: VimCommandState::default(),
             register,
             capture_on_insert: true,
         }
@@ -107,7 +108,6 @@ impl KeyEventHandler {
     /// starts with the current sequence, the lookup sequence is reset.
     #[must_use]
     fn get(&mut self, c: KeyInput, mode: EditorMode) -> Option<Action> {
-        self.pending_normal_count.clear();
         self.lookup.push(c);
         let key = KeyEventRegister::new(self.lookup.clone(), mode);
 
@@ -157,6 +157,12 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         (
             KeyEventRegister::n(vec![KeyInput::new('/')]),
             StartSearch.chain(SwitchMode(EditorMode::Search)).into(),
+        ),
+        (
+            KeyEventRegister::n(vec![KeyInput::new('?')]),
+            StartBackwardSearch
+                .chain(SwitchMode(EditorMode::Search))
+                .into(),
         ),
         // Trigger initial search
         (
@@ -304,6 +310,30 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         (
             KeyEventRegister::v(vec![KeyInput::new('b')]),
             MoveWordBackward(1).into(),
+        ),
+        (
+            KeyEventRegister::n(vec![KeyInput::shift('W')]),
+            MoveBigWordForward(1).into(),
+        ),
+        (
+            KeyEventRegister::v(vec![KeyInput::shift('W')]),
+            MoveBigWordForward(1).into(),
+        ),
+        (
+            KeyEventRegister::n(vec![KeyInput::shift('E')]),
+            MoveBigWordForwardToEndOfWord(1).into(),
+        ),
+        (
+            KeyEventRegister::v(vec![KeyInput::shift('E')]),
+            MoveBigWordForwardToEndOfWord(1).into(),
+        ),
+        (
+            KeyEventRegister::n(vec![KeyInput::shift('B')]),
+            MoveBigWordBackward(1).into(),
+        ),
+        (
+            KeyEventRegister::v(vec![KeyInput::shift('B')]),
+            MoveBigWordBackward(1).into(),
         ),
         // Move cursor to start/first/last position
         (
@@ -476,179 +506,25 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             KeyEventRegister::i(vec![KeyInput::new(KeyCode::Delete)]),
             DeleteCharForward(1).into(),
         ),
-        // Delete the current line
-        (
-            KeyEventRegister::n(vec![KeyInput::new('d'), KeyInput::new('d')]),
-            DeleteLine(1).into(),
-        ),
-        // Delete from the cursor to the end of the line
+        // Delete/change from the cursor to the end of the line
         (
             KeyEventRegister::n(vec![KeyInput::shift('D')]),
             DeleteToEndOfLine.into(),
         ),
-        // Delete the current selection
         (
-            KeyEventRegister::v(vec![KeyInput::new('d')]),
-            DeleteSelection.chain(SwitchMode(EditorMode::Normal)).into(),
+            KeyEventRegister::n(vec![KeyInput::shift('C')]),
+            ChangeToEndOfLine.into(),
         ),
         // Join the current line with the line below
         (
             KeyEventRegister::n(vec![KeyInput::shift('J')]),
             JoinLineWithLineBelow.into(),
         ),
-        // Select inner word between delimiters
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('w')]),
-            SelectInnerWord.into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('"')]),
-            SelectInnerBetween::new('"', '"').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('\'')]),
-            SelectInnerBetween::new('\'', '\'').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('(')]),
-            SelectInnerBetween::new('(', ')').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new(')')]),
-            SelectInnerBetween::new('(', ')').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('{')]),
-            SelectInnerBetween::new('{', '}').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('}')]),
-            SelectInnerBetween::new('{', '}').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new('[')]),
-            SelectInnerBetween::new('[', ']').into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('i'), KeyInput::new(']')]),
-            SelectInnerBetween::new('[', ']').into(),
-        ),
-        // Change inner word between delimiters
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('w'),
-            ]),
-            SwitchMode(EditorMode::Insert).chain(ChangeInnerWord).into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('"'),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('"', '"'))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('\''),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('\'', '\''))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('('),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('(', ')'))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new(')'),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('(', ')'))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('{'),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('{', '}'))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('}'),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('{', '}'))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new('['),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('[', ']'))
-                .into(),
-        ),
-        (
-            KeyEventRegister::n(vec![
-                KeyInput::new('c'),
-                KeyInput::new('i'),
-                KeyInput::new(']'),
-            ]),
-            SwitchMode(EditorMode::Insert)
-                .chain(ChangeInnerBetween::new('[', ']'))
-                .into(),
-        ),
-        // Change selection
-        (
-            KeyEventRegister::v(vec![KeyInput::new('c')]),
-            SwitchMode(EditorMode::Insert).chain(ChangeSelection).into(),
-        ),
-        (
-            KeyEventRegister::v(vec![KeyInput::new('x')]),
-            ChangeSelection.chain(SwitchMode(EditorMode::Normal)).into(),
-        ),
-        // Select  the line
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('V')]),
-            SelectLine.into(),
-        ),
         // Undo
         (KeyEventRegister::n(vec![KeyInput::new('u')]), Undo.into()),
         // Redo
         (KeyEventRegister::n(vec![KeyInput::ctrl('r')]), Redo.into()),
         // Copy
-        (
-            KeyEventRegister::v(vec![KeyInput::new('y')]),
-            CopySelection.chain(SwitchMode(EditorMode::Normal)).into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::new('y'), KeyInput::new('y')]),
-            CopyLine.into(),
-        ),
         // Paste
         (KeyEventRegister::n(vec![KeyInput::new('p')]), Paste.into()),
         (
@@ -967,40 +843,126 @@ impl KeyEventHandler {
         }
 
         if matches!(mode, EditorMode::Normal | EditorMode::Visual)
-            && self.handle_count_prefix(key_input, state)
+            && self
+                .vim_command_context()
+                .handle_count_prefix(key_input, state)
+        {
+            return;
+        }
+
+        if mode == EditorMode::Normal
+            && self
+                .vim_command_context()
+                .handle_normal_key(key_input, state)
+        {
+            return;
+        }
+        if mode == EditorMode::Visual
+            && self
+                .vim_command_context()
+                .handle_visual_key(key_input, state)
         {
             return;
         }
 
         // Else lookup an action from the register
         if let Some(mut action) = self.get(key_input, mode) {
+            let count = self.take_command_count();
+            if count != 1 {
+                apply_count(&mut action, count, key_input, mode, state);
+            }
             action.execute(state);
+            self.vim.clear();
+        } else if matches!(mode, EditorMode::Normal | EditorMode::Visual) {
+            if self.lookup.is_empty() {
+                self.vim_command_context().clear_if_idle();
+            } else {
+                self.vim_command_context()
+                    .capture_operator_count_if_needed();
+            }
         }
     }
 
-    fn handle_count_prefix(&mut self, key_input: KeyInput, state: &mut EditorState) -> bool {
-        match key_input.key {
-            input::KeyCode::Char(digit)
-                if digit.is_ascii_digit()
-                    && key_input.modifiers == input::Modifiers::NONE
-                    && (!self.pending_normal_count.is_empty() || digit != '0') =>
-            {
-                self.pending_normal_count.push(digit);
-                true
-            }
-            input::KeyCode::Char('G')
-                if key_input.modifiers == input::Modifiers::SHIFT
-                    && !self.pending_normal_count.is_empty() =>
-            {
-                let count = self.pending_normal_count.parse::<usize>().ok();
-                self.pending_normal_count.clear();
-                if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
-                    move_to_row(state, target_row);
-                }
-                true
-            }
-            _ => false,
+    fn vim_command_context(&mut self) -> VimCommandContext<'_> {
+        VimCommandContext {
+            state: &mut self.vim,
+            lookup: &mut self.lookup,
         }
+    }
+
+    fn take_command_count(&mut self) -> usize {
+        self.vim.take_command_count()
+    }
+}
+
+fn apply_count(
+    action: &mut Action,
+    count: usize,
+    key_input: KeyInput,
+    mode: EditorMode,
+    state: &mut EditorState,
+) {
+    match action {
+        Action::MoveForward(a) => a.0 = count,
+        Action::MoveBackward(a) => a.0 = count,
+        Action::MoveUp(a) => a.0 = count,
+        Action::MoveDown(a) => a.0 = count,
+        Action::MoveWordForward(a) => a.0 = count,
+        Action::MoveWordForwardToEndOfWord(a) => a.0 = count,
+        Action::MoveWordBackward(a) => a.0 = count,
+        Action::MoveBigWordForward(a) => a.0 = count,
+        Action::MoveBigWordForwardToEndOfWord(a) => a.0 = count,
+        Action::MoveBigWordBackward(a) => a.0 = count,
+        Action::RemoveChar(a) => a.0 = count,
+        Action::DeleteWordForward(a) => a.0 = count,
+        Action::ChangeWordForward(a) => a.0 = count,
+        Action::CopyWordForward(a) => a.0 = count,
+        Action::DeleteToWordEnd(a) => a.0 = count,
+        Action::ChangeToWordEnd(a) => a.0 = count,
+        Action::CopyToWordEnd(a) => a.0 = count,
+        Action::DeleteBigWordForward(a) => a.0 = count,
+        Action::ChangeBigWordForward(a) => a.0 = count,
+        Action::CopyBigWordForward(a) => a.0 = count,
+        Action::DeleteToBigWordEnd(a) => a.0 = count,
+        Action::ChangeToBigWordEnd(a) => a.0 = count,
+        Action::CopyToBigWordEnd(a) => a.0 = count,
+        Action::DeleteBigWordBackward(a) => a.0 = count,
+        Action::ChangeBigWordBackward(a) => a.0 = count,
+        Action::CopyBigWordBackward(a) => a.0 = count,
+        Action::DeleteLineDown(a) => a.0 = count,
+        Action::ChangeLineDown(a) => a.0 = count,
+        Action::CopyLineDown(a) => a.0 = count,
+        Action::DeleteLineUp(a) => a.0 = count,
+        Action::ChangeLineUp(a) => a.0 = count,
+        Action::CopyLineUp(a) => a.0 = count,
+        Action::DeleteWordBackward(a) => a.0 = count,
+        Action::ChangeWordBackward(a) => a.0 = count,
+        Action::CopyWordBackward(a) => a.0 = count,
+        Action::DeleteLine(a)
+            if matches!(mode, EditorMode::Normal)
+                && matches!(key_input.key, input::KeyCode::Char('d')) =>
+        {
+            a.0 = count;
+        }
+        Action::ChangeLine(a)
+            if matches!(mode, EditorMode::Normal)
+                && matches!(key_input.key, input::KeyCode::Char('c')) =>
+        {
+            a.0 = count;
+        }
+        Action::MoveToEndOfLine(_) => {
+            for _ in 1..count {
+                MoveDown(1).execute(state);
+            }
+        }
+        Action::MoveToLastRow(_) => {
+            if let Some(target_row) = count.checked_sub(1) {
+                move_to_row(state, target_row);
+            }
+            // The counted G has already been handled; make the registered G a no-op.
+            *action = MoveDown(0).into();
+        }
+        _ => {}
     }
 }
 
@@ -1020,6 +982,8 @@ mod tests {
     #[allow(deprecated)]
     use super::deprecated::KeyEvent;
     use super::*;
+    use crate::clipboard::{ClipboardTrait, InternalClipboard};
+    use ratatui_core::widgets::Widget;
 
     #[test]
     #[allow(deprecated)]
@@ -1149,6 +1113,945 @@ mod tests {
         // Cursor should have moved to position 6 ('W'), not inserted 'f'
         assert_eq!(state.cursor.col, 6);
         assert_eq!(state.lines.to_string(), "Hello World");
+    }
+
+    fn press(handler: &mut KeyEventHandler, state: &mut EditorState, keys: &[KeyInput]) {
+        for key in keys {
+            handler.on_event(*key, state);
+        }
+    }
+
+    #[test]
+    fn vim_undo_redo_groups_insert_sessions_and_clears_redo_on_new_change() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("abc"));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('i'),
+                KeyInput::shift('X'),
+                KeyInput::shift('Y'),
+                KeyInput::new(KeyCode::Esc),
+            ],
+        );
+        assert_eq!(state.lines.to_string(), "XYabc");
+        assert_eq!(state.mode, EditorMode::Normal);
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "abc");
+
+        press(&mut handler, &mut state, &[KeyInput::ctrl('r')]);
+        assert_eq!(state.lines.to_string(), "XYabc");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "abc");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('i'),
+                KeyInput::shift('Z'),
+                KeyInput::new(KeyCode::Esc),
+            ],
+        );
+        assert_eq!(state.lines.to_string(), "Zabc");
+
+        press(&mut handler, &mut state, &[KeyInput::ctrl('r')]);
+        assert_eq!(state.lines.to_string(), "Zabc");
+    }
+
+    #[test]
+    fn vim_search_navigation_and_cancel_are_not_undoable() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two\ntwo three\ntwo"));
+        state.cursor = crate::Index2::new(0, 0);
+
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('/'),
+                KeyInput::new('t'),
+                KeyInput::new('w'),
+                KeyInput::new('o'),
+                KeyInput::new(KeyCode::Enter),
+            ],
+        );
+        assert_eq!(state.mode, EditorMode::Normal);
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+
+        press(&mut handler, &mut state, &[KeyInput::new('n')]);
+        assert_eq!(state.cursor, crate::Index2::new(1, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::shift('N')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two\ntwo three\ntwo");
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+
+        press(&mut handler, &mut state, &[KeyInput::new('/')]);
+        press(&mut handler, &mut state, &[KeyInput::new('t')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+        press(&mut handler, &mut state, &[KeyInput::new(KeyCode::Esc)]);
+        assert_eq!(state.mode, EditorMode::Normal);
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+    }
+
+    #[test]
+    fn vim_reverse_search_uses_n_and_shift_n_like_vim() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two\ntwo three\ntwo"));
+        state.cursor = crate::Index2::new(2, 2);
+
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('?'),
+                KeyInput::new('t'),
+                KeyInput::new('w'),
+                KeyInput::new('o'),
+                KeyInput::new(KeyCode::Enter),
+            ],
+        );
+        assert_eq!(state.mode, EditorMode::Normal);
+        assert_eq!(state.cursor, crate::Index2::new(2, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::new('n')]);
+        assert_eq!(state.cursor, crate::Index2::new(1, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::shift('N')]);
+        assert_eq!(state.cursor, crate::Index2::new(2, 0));
+    }
+
+    #[test]
+    fn vim_word_motions_treat_underscore_as_word_char() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("test_1234"));
+        state.cursor.col = 8;
+
+        press(&mut handler, &mut state, &[KeyInput::new('b')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::new('e')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 8));
+    }
+
+    #[test]
+    fn vim_word_and_big_word_split_like_prompt_toolkit() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo.bar baz/qux"));
+
+        press(&mut handler, &mut state, &[KeyInput::new('w')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 3));
+        press(&mut handler, &mut state, &[KeyInput::new('w')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+
+        state.cursor.col = 0;
+        press(&mut handler, &mut state, &[KeyInput::shift('W')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 8));
+        press(&mut handler, &mut state, &[KeyInput::shift('E')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 14));
+        press(&mut handler, &mut state, &[KeyInput::shift('B')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 8));
+    }
+
+    #[test]
+    fn vim_counts_apply_to_common_motions_and_edits() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three four\nfive\nsix"));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('3'), KeyInput::new('w')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 14));
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('b')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('5'), KeyInput::new('l')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 9));
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('$')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(1, 3));
+
+        state.cursor = crate::Index2::new(0, 0);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('4'), KeyInput::new('x')],
+        );
+        assert_eq!(state.lines.to_string(), "two three four\nfive\nsix");
+    }
+
+    #[test]
+    fn vim_operator_word_and_end_of_line_commands_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "two three");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+        assert_eq!(state.clip.get_text(), "one ");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "two three");
+        assert_eq!(state.mode, EditorMode::Insert);
+
+        state.mode = EditorMode::Normal;
+        state = EditorState::new(crate::Lines::from("one two three"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        state.cursor.col = 4;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('$')],
+        );
+        assert_eq!(state.lines.to_string(), "one two three");
+        assert_eq!(state.clip.get_text(), "two three");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('$')],
+        );
+        assert_eq!(state.lines.to_string(), "one ");
+    }
+
+    #[test]
+    fn vim_invalid_partial_commands_clear_pending_state() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("abc(def)"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('q')],
+        );
+        assert_eq!(state.lines.to_string(), "abc(def)");
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 1));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('i'), KeyInput::new('q')],
+        );
+        assert_eq!(state.lines.to_string(), "abc(def)");
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 2));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('t'), KeyInput::new('x')],
+        );
+        assert_eq!(state.lines.to_string(), "abc(def)");
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 3));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('d'), KeyInput::new('q')],
+        );
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('t'), KeyInput::new('x')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 5));
+    }
+
+    #[test]
+    fn vim_substitute_char_command_uses_change_operator() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("abcdef"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(&mut handler, &mut state, &[KeyInput::new('s')]);
+        assert_eq!(state.lines.to_string(), "bcdef");
+        assert_eq!(state.clip.get_text(), "a");
+        assert_eq!(state.mode, EditorMode::Insert);
+
+        state.mode = EditorMode::Normal;
+        state = EditorState::new(crate::Lines::from("abcdef"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('3'), KeyInput::new('s')],
+        );
+        assert_eq!(state.lines.to_string(), "def");
+        assert_eq!(state.clip.get_text(), "abc");
+        assert_eq!(state.mode, EditorMode::Insert);
+
+        state.mode = EditorMode::Normal;
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "abcdef");
+    }
+
+    #[test]
+    fn vim_normal_char_search_motions_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo(bar) baz)"));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('t'), KeyInput::new(')')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 6));
+
+        state.cursor.col = 0;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('f'), KeyInput::new(')')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 7));
+
+        state.cursor.col = 12;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::shift('T'), KeyInput::new('(')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::shift('F'), KeyInput::new('(')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 3));
+
+        state.cursor.col = 0;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('t'), KeyInput::new(')')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 11));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('t'), KeyInput::new('x')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 11));
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 12));
+    }
+
+    #[test]
+    fn vim_operator_char_search_motions_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo(bar) baz"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('t'), KeyInput::new(')')],
+        );
+        assert_eq!(state.lines.to_string(), ") baz");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+        assert_eq!(state.clip.get_text(), "foo(bar");
+
+        state = EditorState::new(crate::Lines::from("abcd("));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('t'), KeyInput::new('(')],
+        );
+        assert_eq!(state.lines.to_string(), "(");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+        assert_eq!(state.clip.get_text(), "abcd");
+
+        let area = ratatui_core::layout::Rect::new(0, 0, 10, 1);
+        let mut buffer = ratatui_core::buffer::Buffer::empty(area);
+        crate::EditorView::new(&mut state).render(area, &mut buffer);
+        assert_eq!(
+            state.cursor_screen_position(),
+            Some(ratatui_core::layout::Position::new(0, 0))
+        );
+
+        state = EditorState::new(crate::Lines::from("foo(bar) baz"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('f'), KeyInput::new(')')],
+        );
+        assert_eq!(state.lines.to_string(), "foo(bar) baz");
+        assert_eq!(state.clip.get_text(), "foo(bar)");
+
+        state.cursor.col = 8;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::shift('T'), KeyInput::new('(')],
+        );
+        assert_eq!(state.lines.to_string(), "foo(baz");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn vim_operator_to_word_end_commands_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('e')],
+        );
+        assert_eq!(state.lines.to_string(), " two");
+        assert_eq!(state.clip.get_text(), "one");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('e')],
+        );
+        assert_eq!(state.lines.to_string(), "one two");
+        assert_eq!(state.clip.get_text(), "one");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::new('e')],
+        );
+        assert_eq!(state.lines.to_string(), " two");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn vim_operator_backward_and_line_start_commands_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.col = 8;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('b')],
+        );
+        assert_eq!(state.lines.to_string(), "one three");
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+        assert_eq!(state.clip.get_text(), "two ");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.col = 8;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('b')],
+        );
+        assert_eq!(state.lines.to_string(), "one two three");
+        assert_eq!(state.clip.get_text(), "two ");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('0')],
+        );
+        assert_eq!(state.lines.to_string(), "three");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+    }
+
+    #[test]
+    fn vim_operator_line_range_commands_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("a\nb\nc\nd"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.row = 1;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::shift('G')],
+        );
+        assert_eq!(state.lines.to_string(), "a\nb\nc\nd");
+        assert_eq!(state.clip.get_text(), "\nb\nc\nd");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::shift('G')],
+        );
+        assert_eq!(state.lines.to_string(), "a");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.row = 2;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('g'), KeyInput::new('g')],
+        );
+        assert_eq!(state.lines.to_string(), "d");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.row = 1;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::shift('G')],
+        );
+        assert_eq!(state.lines.to_string(), "a");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn vim_visual_text_objects_use_shared_ranges() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.col = 5;
+
+        press(&mut handler, &mut state, &[KeyInput::new('v')]);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('i'), KeyInput::new('w')],
+        );
+        assert_eq!(state.mode, EditorMode::Visual);
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 4),
+                crate::Index2::new(0, 6)
+            ))
+        );
+
+        press(&mut handler, &mut state, &[KeyInput::new('y')]);
+        assert_eq!(state.clip.get_text(), "two");
+        assert_eq!(state.mode, EditorMode::Normal);
+
+        state = EditorState::new(crate::Lines::from("foo(bar)"));
+        state.cursor.col = 5;
+        handler = KeyEventHandler::vim_mode();
+        press(&mut handler, &mut state, &[KeyInput::new('v')]);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('a'), KeyInput::new(')')],
+        );
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 3),
+                crate::Index2::new(0, 7)
+            ))
+        );
+    }
+
+    #[test]
+    fn vim_word_text_objects_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.col = 5;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('i'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "one two three");
+        assert_eq!(state.clip.get_text(), "two");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('i'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "one  three");
+        assert_eq!(state.cursor, crate::Index2::new(0, 4));
+        assert_eq!(state.clip.get_text(), "two");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.col = 5;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('a'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "one three");
+        assert_eq!(state.clip.get_text(), "two ");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.col = 5;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::new('i'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "one  three");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    fn assert_cursor_in_bounds(state: &EditorState) {
+        assert!(state.cursor.row < state.lines.len());
+        let len = state.lines.len_col(state.cursor.row).unwrap_or_default();
+        assert!(state.cursor.col <= len.max(1));
+    }
+
+    #[test]
+    fn vim_undo_grouping_and_yank_invariants() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three\nfour\nfive"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('3'), KeyInput::new('w')],
+        );
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three\nfour\nfive");
+        assert_cursor_in_bounds(&state);
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('w')],
+        );
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three\nfour\nfive");
+        assert_cursor_in_bounds(&state);
+
+        state.cursor = crate::Index2::new(0, 0);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('4'), KeyInput::new('x')],
+        );
+        assert_eq!(state.lines.to_string(), "two three\nfour\nfive");
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three\nfour\nfive");
+        press(&mut handler, &mut state, &[KeyInput::ctrl('r')]);
+        assert_eq!(state.lines.to_string(), "two three\nfour\nfive");
+        assert_cursor_in_bounds(&state);
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('3'), KeyInput::new('d'), KeyInput::new('d')],
+        );
+        assert_eq!(state.lines.to_string(), "");
+        assert_cursor_in_bounds(&state);
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three\nfour\nfive");
+        assert_cursor_in_bounds(&state);
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('2'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "three\nfour\nfive");
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three\nfour\nfive");
+        assert_cursor_in_bounds(&state);
+    }
+
+    #[test]
+    fn vim_cursor_clamps_after_destructive_line_commands() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("a\nb"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.row = 1;
+        state.cursor.col = 1;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('d')],
+        );
+        assert_eq!(state.lines.to_string(), "a");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+        assert_cursor_in_bounds(&state);
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('d')],
+        );
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+        assert_cursor_in_bounds(&state);
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "a\nb");
+        assert_cursor_in_bounds(&state);
+    }
+
+    #[test]
+    fn vim_vertical_operator_motions_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("a\nb\nc\nd"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.row = 1;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('j')],
+        );
+        assert_eq!(state.clip.get_text(), "\nb\nc");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('j')],
+        );
+        assert_eq!(state.lines.to_string(), "a\nd");
+        assert_eq!(state.cursor, crate::Index2::new(1, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.row = 2;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('k')],
+        );
+        assert_eq!(state.lines.to_string(), "a\nd");
+        assert_eq!(state.cursor, crate::Index2::new(1, 0));
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.row = 1;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('c'), KeyInput::new('j')],
+        );
+        assert_eq!(state.lines.to_string(), "a");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn vim_big_word_operator_motions_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo.bar baz/qux"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::shift('W')],
+        );
+        assert_eq!(state.lines.to_string(), "baz/qux");
+        assert_eq!(state.clip.get_text(), "foo.bar ");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.col = 8;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::shift('E')],
+        );
+        assert_eq!(state.clip.get_text(), "baz/qux");
+
+        state.cursor.col = 12;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::shift('B')],
+        );
+        assert_eq!(state.lines.to_string(), "foo.bar qux");
+        assert_eq!(state.clip.get_text(), "baz/");
+    }
+
+    #[test]
+    fn vim_big_word_text_objects_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo.bar baz"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.col = 1;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('i'), KeyInput::shift('W')],
+        );
+        assert_eq!(state.clip.get_text(), "foo.bar");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('a'), KeyInput::shift('W')],
+        );
+        assert_eq!(state.lines.to_string(), "baz");
+        assert_eq!(state.clip.get_text(), "foo.bar ");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.col = 1;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::new('i'), KeyInput::shift('W')],
+        );
+        assert_eq!(state.lines.to_string(), " baz");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn vim_delimiter_text_objects_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo(hello) bar"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.col = 5;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('i'), KeyInput::new('(')],
+        );
+        assert_eq!(state.clip.get_text(), "hello");
+        assert_eq!(state.lines.to_string(), "foo(hello) bar");
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('a'), KeyInput::new('(')],
+        );
+        assert_eq!(state.lines.to_string(), "foo bar");
+        assert_eq!(state.clip.get_text(), "(hello)");
+
+        state.mode = EditorMode::Normal;
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor.col = 5;
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::new('i'), KeyInput::new(')')],
+        );
+        assert_eq!(state.lines.to_string(), "foo() bar");
+        assert_eq!(state.mode, EditorMode::Insert);
+    }
+
+    #[test]
+    fn vim_change_line_commands_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("a\nb\nc\nd"));
+        state.set_clipboard(InternalClipboard::default());
+        state.cursor.row = 1;
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('c'), KeyInput::new('c')],
+        );
+        assert_eq!(state.lines.to_string(), "a\nc\nd");
+        assert_eq!(state.cursor, crate::Index2::new(1, 0));
+        assert_eq!(state.mode, EditorMode::Insert);
+        assert_eq!(state.clip.get_text(), "\nb");
+
+        state.mode = EditorMode::Normal;
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        state.cursor = crate::Index2::new(1, 0);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('c'), KeyInput::new('c')],
+        );
+        assert_eq!(state.lines.to_string(), "a\nd");
+        assert_eq!(state.mode, EditorMode::Insert);
+        assert_eq!(state.clip.get_text(), "\nb\nc");
+
+        state = EditorState::new(crate::Lines::from("abc def"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        state.cursor.col = 4;
+        press(&mut handler, &mut state, &[KeyInput::shift('C')]);
+        assert_eq!(state.lines.to_string(), "abc ");
+        assert_eq!(state.mode, EditorMode::Insert);
+        assert_eq!(state.clip.get_text(), "def");
+    }
+
+    #[test]
+    fn vim_operator_counts_multiply_for_word_commands() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("one two three four"));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('2'), KeyInput::new('d'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "three four");
+
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('2'), KeyInput::new('w')],
+        );
+        assert_eq!(state.lines.to_string(), "three four");
+
+        state = EditorState::new(crate::Lines::from("one two three four five six"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('2'),
+                KeyInput::new('d'),
+                KeyInput::new('3'),
+                KeyInput::new('w'),
+            ],
+        );
+        assert_eq!(state.lines.to_string(), "");
+        press(&mut handler, &mut state, &[KeyInput::new('u')]);
+        assert_eq!(state.lines.to_string(), "one two three four five six");
     }
 
     #[test]

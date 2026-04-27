@@ -209,7 +209,7 @@ where
         {
             let width = u16::try_from(display_width(cell.symbol())).unwrap_or(1);
             self.last_known_cursor_pos = Position {
-                x: x.saturating_add(width.saturating_sub(1)),
+                x: x.saturating_add(width),
                 y: *y,
             };
         }
