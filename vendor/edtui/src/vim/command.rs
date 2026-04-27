@@ -1,5 +1,6 @@
 use crate::{
     events::key::input::{self, KeyInput},
+    state::selection::set_selection_with_lines,
     EditorMode, EditorState,
 };
 
@@ -402,4 +403,7 @@ fn move_to_row(editor: &mut EditorState, target_row: usize) {
     }
     editor.cursor.row = target_row.min(editor.lines.len().saturating_sub(1));
     editor.clamp_column();
+    if editor.mode == EditorMode::Visual {
+        set_selection_with_lines(&mut editor.selection, editor.cursor, &editor.lines);
+    }
 }

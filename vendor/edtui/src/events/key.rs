@@ -2067,4 +2067,26 @@ mod tests {
         handler.on_event(KeyInput::shift('G'), &mut state);
         assert_eq!(state.cursor.row, 2);
     }
+
+    #[test]
+    fn vim_visual_count_g_updates_selection_highlight() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("a\nb\nc\nd"));
+
+        press(&mut handler, &mut state, &[KeyInput::new('v')]);
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('3'), KeyInput::shift('G')],
+        );
+
+        assert_eq!(state.cursor.row, 2);
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 0),
+                crate::Index2::new(2, 0)
+            ))
+        );
+    }
 }
