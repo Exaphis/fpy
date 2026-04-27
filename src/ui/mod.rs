@@ -18,6 +18,7 @@ use crossterm::{
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, EditorView,
     actions::{Chainable, InsertChar, LineBreak, SwitchMode},
+    syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet},
 };
 use futures::StreamExt;
 use nucleo::{
@@ -32,6 +33,7 @@ use ratatui::{
 };
 use std::{
     io::{Write, stdout},
+    sync::LazyLock,
     time::Duration,
 };
 use throbber_widgets_tui::ThrobberState;
@@ -54,6 +56,12 @@ use crate::custom_terminal::{CursorStyle, DefaultTerminal};
 use crate::history::{HistoryEntry, HistoryOutcome};
 use crate::insert_history::insert_history_text;
 use crate::kernel::KernelStatus;
+
+const HISTORY_SEARCH_THEME_NAME: &str = "base16-ocean.dark";
+
+static HISTORY_SEARCH_SYNTAX_SET: LazyLock<SyntaxSet> =
+    LazyLock::new(SyntaxSet::load_defaults_newlines);
+static HISTORY_SEARCH_THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteAction {
@@ -243,7 +251,6 @@ impl EditorController {
         self.editor
             .execute(SwitchMode(EditorMode::Insert).chain(LineBreak(1)));
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1436,13 +1443,66 @@ fn render_history_search_popup(
         preview_label_area,
     );
 
-    let preview_text = history_search
+    let preview_lines = history_search
         .results
         .get(history_search.selected)
         .and_then(|&entry_index| history_entries.get(entry_index))
-        .map(|entry| entry.code.clone())
-        .unwrap_or_default();
-    frame.render_widget(Paragraph::new(preview_text), preview_area);
+        .map(|entry| syntax_highlighted_history_preview(&entry.code))
+        .unwrap_or_else(|| vec![Line::default()]);
+    frame.render_widget(Paragraph::new(preview_lines), preview_area);
+}
+
+fn syntax_highlighted_history_preview(code: &str) -> Vec<Line<'static>> {
+    let syntax = HISTORY_SEARCH_SYNTAX_SET
+        .find_syntax_by_extension("py")
+        .unwrap_or_else(|| HISTORY_SEARCH_SYNTAX_SET.find_syntax_plain_text());
+    let Some(theme) = HISTORY_SEARCH_THEME_SET
+        .themes
+        .get(HISTORY_SEARCH_THEME_NAME)
+    else {
+        return plain_history_preview(code);
+    };
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let lines = code.split('\n');
+    let mut highlighted = Vec::new();
+
+    for line in lines {
+        match highlighter.highlight_line(line, &HISTORY_SEARCH_SYNTAX_SET) {
+            Ok(ranges) => {
+                let spans = ranges
+                    .into_iter()
+                    .map(|(style, text)| {
+                        Span::styled(
+                            text.to_string(),
+                            Style::default().fg(Color::Rgb(
+                                style.foreground.r,
+                                style.foreground.g,
+                                style.foreground.b,
+                            )),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                highlighted.push(Line::from(spans));
+            }
+            Err(_) => highlighted.push(Line::raw(line.to_string())),
+        }
+    }
+
+    if highlighted.is_empty() {
+        highlighted.push(Line::default());
+    }
+    highlighted
+}
+
+fn plain_history_preview(code: &str) -> Vec<Line<'static>> {
+    let mut lines = code
+        .split('\n')
+        .map(|line| Line::raw(line.to_string()))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(Line::default());
+    }
+    lines
 }
 
 fn render_history_search_status(frame: &mut crate::custom_terminal::Frame<'_>, status_area: Rect) {
@@ -1560,4 +1620,30 @@ fn set_scroll_region(top: u16, bottom: u16) -> String {
 
 fn reset_scroll_region() -> &'static str {
     "\x1b[r"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_search_preview_uses_python_syntax_highlighting() {
+        let lines = syntax_highlighted_history_preview("x = 1\nprint(x)");
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "x = 1print(x)"
+        );
+        assert!(
+            lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.style.fg.is_some())
+        );
+    }
 }
