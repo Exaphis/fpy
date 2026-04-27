@@ -3,6 +3,7 @@ mod render;
 mod transcript;
 
 use anyhow::Result;
+use chrono::{DateTime, Local, Utc};
 use crossterm::{
     cursor::{MoveTo, MoveToColumn, SetCursorStyle, Show},
     event::{
@@ -264,6 +265,7 @@ struct HistorySearchEntry {
     first_line: String,
     line_count: usize,
     duration_ns: Option<u64>,
+    timestamp_unix_ns: Option<u64>,
     outcome: Option<HistoryOutcome>,
 }
 
@@ -1253,6 +1255,7 @@ impl HistorySearchEntry {
             first_line,
             line_count,
             duration_ns: None,
+            timestamp_unix_ns: None,
             outcome: None,
         }
     }
@@ -1260,6 +1263,7 @@ impl HistorySearchEntry {
     fn from_history_entry(entry: HistoryEntry) -> Self {
         let mut search = Self::new(entry.code);
         search.duration_ns = entry.duration_ns;
+        search.timestamp_unix_ns = Some(entry.ts_unix_ns);
         search.outcome = entry.outcome;
         search
     }
@@ -1293,6 +1297,9 @@ impl HistorySearchEntry {
         let mut parts = Vec::new();
         if let Some(duration_ns) = self.duration_ns {
             parts.push(format_duration_ns(duration_ns));
+        }
+        if let Some(timestamp) = self.timestamp_unix_ns.and_then(format_history_timestamp) {
+            parts.push(timestamp);
         }
         if let Some(outcome) = self.outcome {
             match outcome {
@@ -1563,6 +1570,13 @@ fn truncate_chars(text: &str, width: usize) -> String {
     text.chars().take(width).collect()
 }
 
+fn format_history_timestamp(timestamp_unix_ns: u64) -> Option<String> {
+    let seconds = i64::try_from(timestamp_unix_ns / 1_000_000_000).ok()?;
+    let nanos = u32::try_from(timestamp_unix_ns % 1_000_000_000).ok()?;
+    let utc = DateTime::<Utc>::from_timestamp(seconds, nanos)?;
+    Some(utc.with_timezone(&Local).format("%Y%m%d %H:%M").to_string())
+}
+
 fn format_duration_ns(duration_ns: u64) -> String {
     let duration = Duration::from_nanos(duration_ns);
     let elapsed = duration.as_secs_f64();
@@ -1630,6 +1644,31 @@ fn reset_scroll_region() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_history_timestamp_as_local_yyyymmdd_24h_time() {
+        assert_eq!(
+            format_history_timestamp(1_700_000_000_000_000_000),
+            Some(
+                DateTime::<Utc>::from_timestamp(1_700_000_000, 0)
+                    .unwrap()
+                    .with_timezone(&Local)
+                    .format("%Y%m%d %H:%M")
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn history_search_metadata_includes_runtime_then_timestamp() {
+        let mut entry = HistorySearchEntry::new("x = 1".to_string());
+        entry.duration_ns = Some(1_500_000);
+        entry.timestamp_unix_ns = Some(1_700_000_000_000_000_000);
+
+        let metadata = entry.metadata();
+        assert!(metadata.starts_with("1.50ms "));
+        assert!(metadata.contains(&format_history_timestamp(1_700_000_000_000_000_000).unwrap()));
+    }
 
     #[test]
     fn history_search_preview_uses_python_syntax_highlighting() {

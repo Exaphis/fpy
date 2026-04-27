@@ -22,6 +22,7 @@ fn idle_prompt_emits_no_redundant_terminal_output() {
 
     let unique = unique_id();
     let session = format!("fpy-e2e-idle-{unique}");
+    let history_dir = TempDir::new().expect("test history dir");
     let ansi_log = repo_root
         .join("target")
         .join(format!("tmux-e2e-idle-{unique}.ansi.log"));
@@ -50,7 +51,7 @@ fn idle_prompt_emits_no_redundant_terminal_output() {
             "120",
             "-y",
             "40",
-            "zsh",
+            &format!("env FPY_HISTORY_DIR='{}' zsh", history_dir.path().display()),
         ])
         .status()
         .expect("start tmux session");
@@ -1079,11 +1080,17 @@ fn run_repro(name: &str, action: &str, extra_env: &[(&str, &str)]) -> Option<Rep
         .filter(|path| path.exists())
         .unwrap_or_else(|| repo_root.join("target/debug/fpy"));
 
+    let default_history_dir = (!extra_env.iter().any(|(key, _)| *key == "FPY_HISTORY_DIR"))
+        .then(|| TempDir::new().expect("test history dir"));
+
     let mut command = Command::new(repo_root.join("scripts/fpy-tmux-repro.sh"));
     command.current_dir(&repo_root).arg(action);
     command.env("SESSION", &session);
     command.env("BEFORE_LOG", &before_log);
     command.env("AFTER_LOG", &after_log);
+    if let Some(history_dir) = &default_history_dir {
+        command.env("FPY_HISTORY_DIR", history_dir.path());
+    }
     if fpy_bin.exists() {
         command.env("FPY_BIN", &fpy_bin);
     }
