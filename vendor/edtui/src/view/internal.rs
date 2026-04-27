@@ -226,7 +226,23 @@ pub(crate) fn line_into_spans_with_selections<'a>(
         spans.push(Span::styled(current_span, current_style));
     }
 
+    if spans.is_empty() && is_empty_line_selection_visible(selections, row_index, col_skips) {
+        spans.push(Span::styled(" ", *selection_style));
+    }
+
     spans
+}
+
+fn is_empty_line_selection_visible(
+    selections: &[&Option<Selection>],
+    row_index: usize,
+    col_skips: usize,
+) -> bool {
+    col_skips == 0
+        && selections
+            .iter()
+            .filter_map(|selection| selection.as_ref())
+            .any(|selection| selection.contains(&Index2::new(row_index, 0)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -254,11 +270,12 @@ pub(crate) fn line_into_highlighted_spans_with_selections<'a>(
     }
 
     // Apply selections (they take priority over highlights)
-    let selections = selections
+    let row_selections = selections
         .iter()
-        .filter_map(|selection| selection.as_ref().filter(|s| s.contains_row(row_index)));
+        .filter_map(|selection| selection.as_ref().filter(|s| s.contains_row(row_index)))
+        .collect::<Vec<_>>();
 
-    for selection in selections {
+    for selection in &row_selections {
         if let Some(new_span) =
             InternalSpan::split_at_selection(&internal_spans, row_index, selection, selection_style)
         {
@@ -268,6 +285,15 @@ pub(crate) fn line_into_highlighted_spans_with_selections<'a>(
 
     if col_skips > 0 {
         InternalSpan::crop_spans(&mut internal_spans, col_skips);
+    }
+
+    if internal_spans.is_empty()
+        && col_skips == 0
+        && row_selections
+            .iter()
+            .any(|selection| selection.contains(&Index2::new(row_index, 0)))
+    {
+        internal_spans.push(InternalSpan::new(" ", selection_style));
     }
 
     internal_spans.into_iter().map(Span::from).collect()
@@ -381,6 +407,24 @@ mod tests {
         // then span is split into highlighted spans
         assert_eq!(spans[0], Span::styled("Hel", hightlighted));
         assert_eq!(spans[1], Span::styled("lo", base));
+    }
+
+    #[test]
+    fn empty_selected_lines_render_a_highlighted_cell() {
+        let base = Style::default();
+        let highlighted = Style::default().red();
+        let line = Vec::new();
+        let selection = Some(Selection::new(Index2::new(0, 0), Index2::new(0, 0)));
+        let selections = vec![&selection];
+
+        let spans =
+            line_into_spans_with_selections(&line, &selections, &[], 0, 0, &base, &highlighted);
+
+        assert_eq!(spans, vec![Span::styled(" ", highlighted)]);
+
+        let horizontally_scrolled =
+            line_into_spans_with_selections(&line, &selections, &[], 0, 1, &base, &highlighted);
+        assert!(horizontally_scrolled.is_empty());
     }
 
     #[test]
