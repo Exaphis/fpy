@@ -35,7 +35,7 @@ use ratatui::{
 use std::{
     io::{Write, stdout},
     sync::LazyLock,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use throbber_widgets_tui::ThrobberState;
 
@@ -309,6 +309,8 @@ pub struct AppUi {
     history_entries: Vec<HistorySearchEntry>,
     history_search: HistorySearchState,
     last_execution_count: Option<u32>,
+    busy_started_at: Option<Instant>,
+    busy_code: Option<String>,
     status: KernelStatus,
     connection_summary: String,
     throbber_state: ThrobberState,
@@ -352,6 +354,8 @@ impl AppUi {
             history_entries: Vec::new(),
             history_search: HistorySearchState::new(),
             last_execution_count: None,
+            busy_started_at: None,
+            busy_code: None,
             status: KernelStatus::Connecting,
             connection_summary,
             throbber_state: ThrobberState::default(),
@@ -406,6 +410,9 @@ impl AppUi {
         self.status = status;
         if status == KernelStatus::Disconnected {
             self.session_ready = false;
+            self.clear_busy_runtime();
+        } else if status == KernelStatus::Idle {
+            self.clear_busy_runtime();
         }
         self.dirty = true;
     }
@@ -415,6 +422,39 @@ impl AppUi {
             self.last_execution_count = Some(count);
             self.dirty = true;
         }
+    }
+
+    fn begin_busy_runtime(&mut self, code: String) {
+        self.busy_started_at = Some(Instant::now());
+        self.busy_code = Some(code);
+        self.dirty = true;
+    }
+
+    fn clear_busy_runtime(&mut self) {
+        self.busy_started_at = None;
+        self.busy_code = None;
+    }
+
+    fn last_runtime_for_code(&self, code: &str) -> Option<u64> {
+        self.history_entries
+            .iter()
+            .rev()
+            .find(|entry| entry.code == code && entry.duration_ns.is_some())
+            .and_then(|entry| entry.duration_ns)
+    }
+
+    fn busy_runtime_label(&self) -> Option<String> {
+        let elapsed = self.busy_started_at?.elapsed();
+        let elapsed_ns = elapsed.as_nanos().min(u128::from(u64::MAX)) as u64;
+        let current = format_duration_ns(elapsed_ns);
+        let last = self
+            .busy_code
+            .as_deref()
+            .and_then(|code| self.last_runtime_for_code(code));
+        Some(match last {
+            Some(last_ns) => format!("{current} ({} last)", format_duration_ns(last_ns)),
+            None => current,
+        })
     }
 
     pub fn needs_animation(&self) -> bool {
@@ -461,6 +501,7 @@ impl AppUi {
     }
 
     pub fn insert_execute_input(&mut self, execution_count: Option<u32>, code: &str) -> Result<()> {
+        self.begin_busy_runtime(code.to_string());
         self.insert_transcript(highlighted_execute_input(execution_count, code))
     }
 
@@ -552,6 +593,11 @@ impl AppUi {
         } else {
             transient_status_label(status)
         };
+        let busy_runtime_label = if status == KernelStatus::Busy {
+            self.busy_runtime_label()
+        } else {
+            None
+        };
 
         if overlay_kind != self.last_overlay_kind {
             self.clear_current_pane_rows()?;
@@ -642,21 +688,28 @@ impl AppUi {
                     );
                     let prefix_width =
                         editor_status_prefix_width(editor.mode(), status_detail.as_deref());
+                    let runtime_label = busy_runtime_label.as_deref();
+                    let activity_width = runtime_label
+                        .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
+                        .unwrap_or(2);
                     let transient_width = transient_status
                         .map(|label| u16::try_from(label.chars().count()).unwrap_or(u16::MAX))
                         .unwrap_or(0);
+                    let transient_gap_width = u16::from(transient_width > 0);
                     let palette_hint_width = editor_palette_hint_width();
                     let [
                         status_text_area,
-                        spinner_gap_area,
-                        spinner_area,
+                        activity_gap_area,
+                        activity_area,
+                        transient_gap_area,
                         transient_area,
                         filler_area,
                         palette_hint_area,
                     ] = Layout::horizontal([
                         Constraint::Length(prefix_width),
                         Constraint::Length(1),
-                        Constraint::Length(2),
+                        Constraint::Length(activity_width),
+                        Constraint::Length(transient_gap_width),
                         Constraint::Length(transient_width),
                         Constraint::Min(1),
                         Constraint::Length(palette_hint_width),
@@ -666,8 +719,19 @@ impl AppUi {
                         editor_status_prefix(editor.mode(), status_detail.as_deref()),
                         status_text_area,
                     );
-                    frame.render_widget(Paragraph::new(" "), spinner_gap_area);
-                    frame.render_stateful_widget(throbber, spinner_area, throbber_state);
+                    frame.render_widget(Paragraph::new(" "), activity_gap_area);
+                    if let Some(runtime_label) = runtime_label {
+                        frame.render_widget(
+                            Paragraph::new(Line::from(Span::styled(
+                                runtime_label.to_string(),
+                                Style::default().fg(Color::Cyan),
+                            ))),
+                            activity_area,
+                        );
+                    } else {
+                        frame.render_stateful_widget(throbber, activity_area, throbber_state);
+                    }
+                    frame.render_widget(Paragraph::new(" "), transient_gap_area);
                     if let Some(transient_status) = transient_status {
                         frame.render_widget(
                             Paragraph::new(Line::from(Span::styled(
