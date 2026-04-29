@@ -60,8 +60,8 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
 
     // Keep this corpus to commands we intentionally support and have not already
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
-    let single_line_atoms = ["h", "l", "w", "b", "e", "0", "$", "x"];
-    let multiline_atoms = ["h", "l", "w", "b", "e", "0", "$", "x"];
+    let single_line_atoms = ["h", "l", "w", "b", "e", "0", "_", "$", "gg", "x"];
+    let multiline_atoms = ["h", "l", "w", "b", "e", "0", "_", "$", "gg", "x"];
     let initials = [
         "one two three",
         "alpha beta\ngamma delta",
@@ -284,6 +284,8 @@ fn parse_keys(keys: &str) -> Vec<KeyInput> {
                 "Tab" => out.push(KeyInput::new(crossterm::event::KeyCode::Tab)),
                 other => panic!("unsupported key token <{other}>")
             }
+        } else if ch.is_ascii_uppercase() {
+            out.push(KeyInput::shift(ch));
         } else {
             out.push(KeyInput::new(ch));
         }
