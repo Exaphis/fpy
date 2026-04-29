@@ -49,6 +49,9 @@ pub struct EditorState {
     /// Clipboard for yank and paste operations.
     pub(crate) clip: Clipboard,
 
+    /// Desired column for repeated Vim-style vertical movement.
+    pub(crate) preferred_col: Option<usize>,
+
     /// Flag indicating a system editor was requested.
     #[cfg(feature = "system-editor")]
     pub(crate) system_edit_requested: bool,
@@ -88,6 +91,7 @@ impl EditorState {
             undo: Stack::new(),
             redo: Stack::new(),
             clip: Clipboard::default(),
+            preferred_col: None,
             #[cfg(feature = "system-editor")]
             system_edit_requested: false,
         }

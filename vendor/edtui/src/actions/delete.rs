@@ -21,6 +21,7 @@ pub struct RemoveChar(pub usize);
 
 impl Execute for RemoveChar {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         state.capture();
         state.clamp_column();
         for _ in 0..self.0 {

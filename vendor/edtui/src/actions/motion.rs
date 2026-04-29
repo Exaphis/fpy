@@ -17,6 +17,7 @@ pub struct MoveForward(pub usize);
 
 impl Execute for MoveForward {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         for _ in 0..self.0 {
             if state.cursor.col >= max_col(&state.lines, &state.cursor, state.mode) {
                 break;
@@ -34,6 +35,7 @@ pub struct MoveBackward(pub usize);
 
 impl Execute for MoveBackward {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         for _ in 0..self.0 {
             if state.cursor.col == 0 {
                 break;
@@ -55,11 +57,14 @@ pub struct MoveUp(pub usize);
 
 impl Execute for MoveUp {
     fn execute(&mut self, state: &mut EditorState) {
+        let preferred_col = state.preferred_col.unwrap_or(state.cursor.col);
+        state.preferred_col = Some(preferred_col);
         for _ in 0..self.0 {
             if state.cursor.row == 0 {
                 break;
             }
             state.cursor.row = state.cursor.row.saturating_sub(1);
+            state.cursor.col = preferred_col.min(line_last_col(state, state.cursor.row));
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -72,11 +77,14 @@ pub struct MoveDown(pub usize);
 
 impl Execute for MoveDown {
     fn execute(&mut self, state: &mut EditorState) {
+        let preferred_col = state.preferred_col.unwrap_or(state.cursor.col);
+        state.preferred_col = Some(preferred_col);
         for _ in 0..self.0 {
             if state.cursor.row >= state.lines.len().saturating_sub(1) {
                 break;
             }
             state.cursor.row += 1;
+            state.cursor.col = preferred_col.min(line_last_col(state, state.cursor.row));
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -87,11 +95,21 @@ impl Execute for MoveDown {
 /// Move one word forward. Breaks on the first character that is not of
 /// the same class as the initial character or breaks on line ending.
 /// Furthermore, after the first break, whitespaces are skipped.
+fn line_last_col(state: &EditorState, row: usize) -> usize {
+    state
+        .lines
+        .to_string()
+        .lines()
+        .nth(row)
+        .map_or(0, |line| line.chars().count().saturating_sub(1))
+}
+
 #[derive(Clone, Debug, Copy)]
 pub struct MoveWordForward(pub usize);
 
 impl Execute for MoveWordForward {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         if state.lines.is_empty() {
             return;
         }
@@ -175,6 +193,7 @@ fn skip_whitespace_across_lines(state: &mut EditorState) {
 pub struct MoveWordForwardToEndOfWord(pub usize);
 impl Execute for MoveWordForwardToEndOfWord {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         if state.lines.is_empty() {
             return;
         }
@@ -226,6 +245,7 @@ pub struct MoveWordBackward(pub usize);
 
 impl Execute for MoveWordBackward {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         if state.lines.is_empty() {
             return;
         }
@@ -404,6 +424,7 @@ pub struct MoveToStartOfLine();
 
 impl Execute for MoveToStartOfLine {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         state.cursor.col = 0;
 
         if state.mode == EditorMode::Visual {
@@ -417,6 +438,7 @@ pub struct MoveToFirst();
 
 impl Execute for MoveToFirst {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         state.cursor.col = 0;
         skip_whitespace(&state.lines, &mut state.cursor);
 
@@ -432,6 +454,7 @@ pub struct MoveToEndOfLine();
 
 impl Execute for MoveToEndOfLine {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = Some(usize::MAX);
         state.cursor.col = max_col(&state.lines, &state.cursor, state.mode);
 
         if state.mode == EditorMode::Visual {
@@ -446,6 +469,7 @@ pub struct MoveToFirstRow();
 
 impl Execute for MoveToFirstRow {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         state.cursor.row = 0;
         state.cursor.col = 0;
         skip_whitespace(&state.lines, &mut state.cursor);
@@ -462,6 +486,7 @@ pub struct MoveToLastRow();
 
 impl Execute for MoveToLastRow {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         state.cursor.row = state.lines.len().saturating_sub(1);
         state.cursor.col = 0;
         skip_whitespace(&state.lines, &mut state.cursor);
