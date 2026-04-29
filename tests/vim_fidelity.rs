@@ -60,13 +60,22 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
 
     // Keep this corpus to commands we intentionally support and have not already
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
-    // Word motions are currently fuzzed against single-line buffers; multiline word-motion
-    // fidelity can be added once those edge cases are fixed in edtui.
-    let atoms = ["h", "l", "w", "b", "e", "0", "$", "x"];
-    let initials = ["one two three", "a b c d e"];
+    let single_line_atoms = ["h", "l", "w", "b", "e", "0", "$", "x"];
+    let multiline_atoms = ["h", "l", "w", "b", "e", "0", "$", "x"];
+    let initials = [
+        "one two three",
+        "alpha beta\ngamma delta",
+        "abc def\nxyz",
+        "a b c d e",
+    ];
 
     for iteration in 0..iterations {
         let initial = initials[rng.usize(initials.len())];
+        let atoms = if initial.contains('\n') {
+            &multiline_atoms[..]
+        } else {
+            &single_line_atoms[..]
+        };
         let mut keys = String::new();
         let mut steps = Vec::new();
         let atom_count = 1 + rng.usize(12);

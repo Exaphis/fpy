@@ -124,11 +124,24 @@ fn move_word_forward(state: &mut EditorState) {
     };
 
     for (next_char, index) in state.lines.iter().from(start_index) {
+        if index.row != state.cursor.row {
+            state.cursor = index;
+            skip_empty_lines(&state.lines, &mut state.cursor.row);
+            skip_whitespace(&state.lines, &mut state.cursor);
+            return;
+        }
         if CharacterClass::from(next_char) != start_char_class {
             state.cursor = index;
             skip_whitespace(&state.lines, &mut state.cursor);
             return;
         }
+    }
+
+    if state.cursor.row + 1 < state.lines.iter_row().count() {
+        state.cursor = Index2::new(state.cursor.row + 1, 0);
+        skip_empty_lines(&state.lines, &mut state.cursor.row);
+        skip_whitespace(&state.lines, &mut state.cursor);
+        return;
     }
 
     let max_col = max_col(&state.lines, &state.cursor, state.mode);
@@ -226,16 +239,15 @@ fn move_word_backward(state: &mut EditorState) {
     let start_char_class = CharacterClass::from(state.lines.get(start_index));
 
     for (next_char, i) in state.lines.iter().from(start_index).rev() {
-        // Break loop if it reaches the start of the line
-        if i.col == 0 {
-            start_index = i;
-            break;
-        }
         // Break loop if characters don't belong to the same class
         if CharacterClass::from(next_char) != start_char_class {
             break;
         }
         start_index = i;
+        // Break loop if it reaches the start of the line
+        if i.col == 0 {
+            break;
+        }
     }
 
     state.cursor = start_index;
