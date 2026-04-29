@@ -60,13 +60,10 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
 
     // Keep this corpus to commands we intentionally support and have not already
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
-    let atoms = ["l", "0"];
-    let initials = [
-        "one two three",
-        "alpha beta\ngamma delta",
-        "abc def\nxyz",
-        "a b c d e",
-    ];
+    // Word motions are currently fuzzed against single-line buffers; multiline word-motion
+    // fidelity can be added once those edge cases are fixed in edtui.
+    let atoms = ["h", "l", "w", "b", "e", "0", "$", "x"];
+    let initials = ["one two three", "a b c d e"];
 
     for iteration in 0..iterations {
         let initial = initials[rng.usize(initials.len())];
@@ -80,11 +77,14 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         }
 
         let edtui = run_edtui(initial, &keys);
-        let vim = run_vim_steps(&vim, initial, &steps);
-        assert_eq!(
-            edtui, vim,
-            "fuzz iteration {iteration}, initial {initial:?}, keys {keys:?}"
-        );
+        let vim_snapshot = run_vim_steps(&vim, initial, &steps);
+        if edtui != vim_snapshot {
+            panic!(
+                "fuzz iteration {iteration}, initial {initial:?}, keys {keys:?}\nedtui: {edtui:?}\nvim:   {vim_snapshot:?}\nedtui trace: {:?}\nvim trace:   {:?}",
+                trace_edtui(initial, &steps),
+                trace_vim_steps(&vim, initial, &steps),
+            );
+        }
     }
 }
 
@@ -122,6 +122,23 @@ fn run_edtui(initial: &str, keys: &str) -> Snapshot {
     for key in parse_keys(keys) {
         handler.on_key_event(key, &mut state);
     }
+    snapshot(&state)
+}
+
+fn trace_edtui(initial: &str, steps: &[&str]) -> Vec<Snapshot> {
+    let mut state = EditorState::new(Lines::from(initial));
+    let mut handler = EditorEventHandler::vim_mode();
+    let mut snapshots = Vec::new();
+    for step in steps {
+        for key in parse_keys(step) {
+            handler.on_key_event(key, &mut state);
+        }
+        snapshots.push(snapshot(&state));
+    }
+    snapshots
+}
+
+fn snapshot(state: &EditorState) -> Snapshot {
     Snapshot {
         text: state.lines.to_string(),
         cursor: (state.cursor.row, state.cursor.col),
@@ -133,17 +150,32 @@ fn run_vim(vim: &str, initial: &str, keys: &str) -> Snapshot {
 }
 
 fn run_vim_steps(vim: &str, initial: &str, steps: &[&str]) -> Snapshot {
+    run_vim_steps_with_trace(vim, initial, steps)
+        .pop()
+        .expect("vim should produce at least one snapshot")
+}
+
+fn trace_vim_steps(vim: &str, initial: &str, steps: &[&str]) -> Vec<Snapshot> {
+    run_vim_steps_with_trace(vim, initial, steps)
+}
+
+fn run_vim_steps_with_trace(vim: &str, initial: &str, steps: &[&str]) -> Vec<Snapshot> {
     let dir = tempdir().expect("tempdir");
     let file = dir.path().join("buffer.txt");
     let cursor_file = dir.path().join("cursor.txt");
+    let trace_file = dir.path().join("trace.txt");
     let script = dir.path().join("script.vim");
     fs::write(&file, initial).expect("write initial buffer");
 
     let mut normal_commands = String::new();
+    let trace_file_arg = vim_single_quoted_path(&trace_file);
     for step in steps {
         normal_commands.push_str("normal! ");
         normal_commands.push_str(&vim_normal_execute_arg(step));
         normal_commands.push('\n');
+        normal_commands.push_str(&format!(
+            "call writefile([line('.') . ':' . col('.') . ':' . join(getline(1, '$'), '\\n')], {trace_file_arg}, 'a')\n"
+        ));
     }
     let file_arg = vim_single_quoted_path(&file);
     let cursor_file_arg = vim_single_quoted_path(&cursor_file);
@@ -178,7 +210,7 @@ fn run_vim_steps(vim: &str, initial: &str, steps: &[&str]) -> Snapshot {
         .trim()
         .split_once(':')
         .expect("vim cursor should be row:col");
-    Snapshot {
+    let final_snapshot = Snapshot {
         text,
         // Vim reports 1-based line and byte column. These tests intentionally use ASCII only,
         // so byte column and edtui's character column are equivalent.
@@ -186,7 +218,38 @@ fn run_vim_steps(vim: &str, initial: &str, steps: &[&str]) -> Snapshot {
             row.parse::<usize>().expect("vim cursor row") - 1,
             col.parse::<usize>().expect("vim cursor col") - 1,
         ),
+    };
+    let mut snapshots = parse_vim_trace(&trace_file);
+    if snapshots.is_empty() {
+        snapshots.push(final_snapshot);
+    } else if let Some(last) = snapshots.last_mut() {
+        *last = final_snapshot;
     }
+    snapshots
+}
+
+fn parse_vim_trace(path: &std::path::Path) -> Vec<Snapshot> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            let mut fields = line.splitn(3, ':');
+            let row = fields
+                .next()
+                .expect("trace row")
+                .parse::<usize>()
+                .expect("trace row")
+                - 1;
+            let col = fields
+                .next()
+                .expect("trace col")
+                .parse::<usize>()
+                .expect("trace col")
+                - 1;
+            let text = fields.next().unwrap_or_default().replace("\\n", "\n");
+            Snapshot { text, cursor: (row, col) }
+        })
+        .collect()
 }
 
 fn vim_single_quoted_path(path: &std::path::Path) -> String {

@@ -217,12 +217,11 @@ fn move_word_backward(state: &mut EditorState) {
     }
 
     if start_index.col == 0 {
-        state.cursor.row = start_index.row.saturating_sub(1);
-        state.cursor.col = state.lines.last_col_index(state.cursor.row);
-        return;
+        start_index.row = start_index.row.saturating_sub(1);
+        start_index.col = state.lines.last_col_index(start_index.row);
+    } else {
+        start_index.col = start_index.col.saturating_sub(1);
     }
-
-    start_index.col = start_index.col.saturating_sub(1);
     skip_whitespace_rev(&state.lines, &mut start_index);
     let start_char_class = CharacterClass::from(state.lines.get(start_index));
 
