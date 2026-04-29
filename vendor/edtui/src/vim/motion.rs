@@ -9,18 +9,27 @@ use super::range::TextRange;
 
 pub(crate) fn word_forward_range(state: &EditorState) -> Option<TextRange> {
     let start = state.cursor;
+    if state.lines.len_col(start.row).unwrap_or_default() == 0
+        && start.row + 1 < state.lines.iter_row().count()
+    {
+        return Some(TextRange::exclusive(start, Index2::new(start.row + 1, 0)));
+    }
     let start_char = state.lines.get(start)?;
     let mut end = start;
     let start_class = CharacterClass::from(start_char);
 
     for (ch, idx) in state.lines.iter().from(start) {
-        if CharacterClass::from(ch) != start_class {
+        if idx.row != start.row || CharacterClass::from(ch) != start_class {
             break;
         }
         end = idx;
     }
     end.col += 1;
-    skip_whitespace(&state.lines, &mut end);
+    if let Some(line) = state.lines.get(jagged::index::RowIndex::new(end.row)) {
+        while end.col < line.len() && line[end.col].is_ascii_whitespace() {
+            end.col += 1;
+        }
+    }
     Some(TextRange::exclusive(start, end))
 }
 

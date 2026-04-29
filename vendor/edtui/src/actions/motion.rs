@@ -127,6 +127,14 @@ impl Execute for MoveWordForward {
 }
 
 fn move_word_forward(state: &mut EditorState) {
+    if state
+        .lines
+        .get(state.cursor)
+        .is_some_and(char::is_ascii_whitespace)
+    {
+        skip_whitespace_across_lines(state);
+        return;
+    }
     let start_char_class = CharacterClass::from(state.lines.get(state.cursor));
 
     let start_index = match (
@@ -185,6 +193,9 @@ fn skip_whitespace_across_lines(state: &mut EditorState) {
         }
         state.cursor = Index2::new(next_row, 0);
         skip_empty_lines(&state.lines, &mut state.cursor.row);
+        while state.cursor.row > 0 && state.lines.get(Index2::new(state.cursor.row, 0)).is_none() {
+            state.cursor.row -= 1;
+        }
     }
 }
 
@@ -220,6 +231,9 @@ fn move_word_forward_to_end_of_word(state: &mut EditorState) {
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),
     };
     skip_empty_lines(&state.lines, &mut start_index.row);
+    while start_index.row > 0 && state.lines.get(Index2::new(start_index.row, 0)).is_none() {
+        start_index.row -= 1;
+    }
     skip_whitespace(&state.lines, &mut start_index);
     let start_char_class = CharacterClass::from(state.lines.get(start_index));
 
@@ -300,12 +314,14 @@ pub struct MoveBigWordForward(pub usize);
 
 impl Execute for MoveBigWordForward {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         if state.lines.is_empty() {
             return;
         }
         state.clamp_column();
         for _ in 0..self.0 {
             move_big_word_forward(state);
+            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -314,18 +330,32 @@ impl Execute for MoveBigWordForward {
 }
 
 fn move_big_word_forward(state: &mut EditorState) {
+    if state
+        .lines
+        .get(state.cursor)
+        .is_some_and(char::is_ascii_whitespace)
+    {
+        skip_whitespace_across_lines(state);
+        return;
+    }
     let start_index = match (
         state.lines.is_last_col(state.cursor),
-        state.lines.is_last_row(state.cursor),
+        state.cursor.row + 1 >= state.lines.iter_row().count(),
     ) {
         (true, true) => return,
         (true, false) => Index2::new(state.cursor.row.saturating_add(1), 0),
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),
     };
     for (next_char, index) in state.lines.iter().from(start_index) {
+        if index.row != state.cursor.row {
+            state.cursor = index;
+            skip_empty_lines(&state.lines, &mut state.cursor.row);
+            skip_whitespace_across_lines(state);
+            return;
+        }
         if next_char.is_some_and(char::is_ascii_whitespace) {
             state.cursor = index;
-            skip_whitespace(&state.lines, &mut state.cursor);
+            skip_whitespace_across_lines(state);
             return;
         }
     }
@@ -340,12 +370,14 @@ pub struct MoveBigWordForwardToEndOfWord(pub usize);
 
 impl Execute for MoveBigWordForwardToEndOfWord {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         if state.lines.is_empty() {
             return;
         }
         state.clamp_column();
         for _ in 0..self.0 {
             move_big_word_forward_to_end_of_word(state);
+            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -356,16 +388,28 @@ impl Execute for MoveBigWordForwardToEndOfWord {
 fn move_big_word_forward_to_end_of_word(state: &mut EditorState) {
     let mut start_index = match (
         state.lines.is_last_col(state.cursor),
-        state.lines.is_last_row(state.cursor),
+        state.cursor.row + 1 >= state.lines.iter_row().count(),
     ) {
         (true, true) => return,
         (true, false) => Index2::new(state.cursor.row.saturating_add(1), 0),
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),
     };
     skip_empty_lines(&state.lines, &mut start_index.row);
+    while start_index.row > 0 && state.lines.get(Index2::new(start_index.row, 0)).is_none() {
+        start_index.row -= 1;
+    }
     skip_whitespace(&state.lines, &mut start_index);
     for (next_char, index) in state.lines.iter().from(start_index) {
         if next_char.is_some_and(char::is_ascii_whitespace) {
+            if index == start_index
+                && state
+                    .lines
+                    .iter_row()
+                    .nth(index.row)
+                    .is_some_and(|row| row.iter().skip(index.col).all(|ch| ch.is_ascii_whitespace()))
+            {
+                state.cursor = index;
+            }
             break;
         }
         state.cursor = index;
@@ -380,6 +424,7 @@ pub struct MoveBigWordBackward(pub usize);
 
 impl Execute for MoveBigWordBackward {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
         if state.lines.is_empty() {
             return;
         }
@@ -399,21 +444,20 @@ fn move_big_word_backward(state: &mut EditorState) {
         return;
     }
     if start_index.col == 0 {
-        state.cursor.row = start_index.row.saturating_sub(1);
-        state.cursor.col = state.lines.last_col_index(state.cursor.row);
-        return;
+        start_index.row = start_index.row.saturating_sub(1);
+        start_index.col = state.lines.last_col_index(start_index.row);
+    } else {
+        start_index.col = start_index.col.saturating_sub(1);
     }
-    start_index.col = start_index.col.saturating_sub(1);
     skip_whitespace_rev(&state.lines, &mut start_index);
     for (next_char, i) in state.lines.iter().from(start_index).rev() {
-        if i.col == 0 {
-            start_index = i;
-            break;
-        }
         if next_char.is_some_and(char::is_ascii_whitespace) {
             break;
         }
         start_index = i;
+        if i.col == 0 {
+            break;
+        }
     }
     state.cursor = start_index;
 }

@@ -73,6 +73,23 @@ fn extract_range(state: &mut EditorState, range: TextRange) -> Lines {
             if range.kind == RangeKind::Inclusive {
                 end.col = end.col.saturating_add(1);
             }
+            if range.start.row == end.row
+                && range.start.col == 0
+                && end.col >= state.lines.len_col(range.start.row).unwrap_or_default()
+                && state.lines.iter_row().count() > 1
+            {
+                let text = state
+                    .lines
+                    .iter_row()
+                    .nth(range.start.row)
+                    .map(|row| row.iter().collect::<String>())
+                    .unwrap_or_default();
+                if let Some(row) = state.lines.get_mut(jagged::index::RowIndex::new(range.start.row)) {
+                    row.clear();
+                }
+                state.cursor = range.start;
+                return Lines::from(text);
+            }
             let text = state.lines.extract(range.start..end);
             state.cursor = range.start;
             text

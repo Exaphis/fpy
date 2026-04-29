@@ -160,12 +160,66 @@ impl Execute for DeleteWordForward {
 }
 
 fn delete_word_forward(state: &mut EditorState) {
+    if state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .is_some_and(|row| row.iter().skip(state.cursor.col).all(|ch| !ch.is_ascii_whitespace()))
+        && state.cursor.row + 1 < state.lines.iter_row().count()
+    {
+        let mut rows: Vec<String> = state
+            .lines
+            .iter_row()
+            .map(|row| row.iter().collect::<String>())
+            .collect();
+        if let Some(row) = rows.get_mut(state.cursor.row) {
+            *row = row.chars().take(state.cursor.col).collect();
+            state.lines = Lines::default();
+            for row in rows {
+                state.lines.push(row.chars().collect::<Vec<_>>());
+            }
+            state.clamp_column();
+        }
+        return;
+    }
     let Some(range) = vim_motion::word_forward_range(state) else {
-        if state.cursor.row + 1 < state.lines.len() {
-            state.lines.join_lines(state.cursor.row);
+        if state.cursor.row + 1 < state.lines.iter_row().count() {
+            let mut rows: Vec<String> = state
+                .lines
+                .iter_row()
+                .map(|row| row.iter().collect::<String>())
+                .collect();
+            rows.remove(state.cursor.row);
+            state.lines = Lines::default();
+            for row in rows {
+                state.lines.push(row.chars().collect::<Vec<_>>());
+            }
+            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
+            state.cursor.col = 0;
         }
         return;
     };
+    if (range.start.row == range.end.row
+        && range.end.col >= state.lines.len_col(range.start.row).unwrap_or_default())
+        || (range.end.row == range.start.row.saturating_add(1) && range.end.col == 0)
+    {
+        let mut rows: Vec<String> = state
+            .lines
+            .to_string()
+            .lines()
+            .map(ToString::to_string)
+            .collect();
+        if let Some(row) = rows.get_mut(range.start.row) {
+            *row = row.chars().take(range.start.col).collect();
+            state.lines = Lines::default();
+            for row in rows {
+                state.lines.push(row.chars().collect::<Vec<_>>());
+            }
+            state.cursor = range.start;
+            state.clamp_column();
+        }
+        return;
+    }
     vim_operator::apply_operator_without_capture(state, Operator::Delete, range);
 }
 
@@ -616,6 +670,10 @@ pub struct DeleteToEndOfLine;
 
 impl Execute for DeleteToEndOfLine {
     fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
+        if state.cursor.col == 0 && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+            return;
+        }
         delete_to_end_of_line(state, true, false);
     }
 }
@@ -641,6 +699,26 @@ impl Execute for CopyToEndOfLine {
 }
 
 fn delete_to_end_of_line(state: &mut EditorState, capture: bool, insert: bool) {
+    state.preferred_col = None;
+    if state.cursor.col == 0 && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+        return;
+    }
+    if !insert {
+        if capture {
+            state.capture();
+        }
+        let mut rows: Vec<String> = state
+            .lines
+            .iter_row()
+            .map(|row| row.iter().collect::<String>())
+            .collect();
+        if let Some(row) = rows.get_mut(state.cursor.row) {
+            *row = row.chars().take(state.cursor.col).collect();
+            state.lines = Lines::from(rows.join("\n"));
+            state.clamp_column();
+        }
+        return;
+    }
     if let Some(range) = vim_motion::line_end_range(state) {
         if capture {
             vim_operator::apply_operator(
@@ -685,11 +763,29 @@ pub struct JoinLineWithLineBelow;
 
 impl Execute for JoinLineWithLineBelow {
     fn execute(&mut self, state: &mut EditorState) {
-        if state.cursor.row + 1 >= state.lines.len() {
+        let text = state.lines.to_string();
+        let mut rows: Vec<String> = text.lines().map(ToString::to_string).collect();
+        if state.cursor.row + 1 >= rows.len() {
             return;
         }
+
+        state.preferred_col = None;
         state.capture();
-        state.lines.join_lines(state.cursor.row);
+
+        let row = state.cursor.row;
+        let left = rows[row].trim_end().to_string();
+        let right = rows.remove(row + 1).trim_start().to_string();
+        let join_col = left.chars().count();
+        rows[row] = if left.is_empty() || right.is_empty() {
+            format!("{left}{right}")
+        } else {
+            format!("{left} {right}")
+        };
+        state.lines = Lines::default();
+        for row in rows {
+            state.lines.push(row.chars().collect::<Vec<_>>());
+        }
+        state.cursor.col = join_col;
     }
 }
 

@@ -60,8 +60,14 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
 
     // Keep this corpus to commands we intentionally support and have not already
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
-    let single_line_atoms = ["h", "j", "k", "l", "w", "b", "e", "0", "_", "$", "gg", "x"];
-    let multiline_atoms = ["h", "j", "k", "l", "w", "b", "e", "0", "_", "$", "gg", "x"];
+    let single_line_atoms = [
+        "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
+        "dd", "dw", "D", "J",
+    ];
+    let multiline_atoms = [
+        "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
+        "dd", "dw", "D", "J",
+    ];
     let initials = [
         "one two three",
         "alpha beta\ngamma delta",
@@ -149,9 +155,17 @@ fn trace_edtui(initial: &str, steps: &[&str]) -> Vec<Snapshot> {
 
 fn snapshot(state: &EditorState) -> Snapshot {
     Snapshot {
-        text: state.lines.to_string(),
+        text: editor_text(&state.lines),
         cursor: (state.cursor.row, state.cursor.col),
     }
+}
+
+fn editor_text(lines: &Lines) -> String {
+    lines
+        .iter_row()
+        .map(|line| line.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run_vim(vim: &str, initial: &str, keys: &str) -> Snapshot {
