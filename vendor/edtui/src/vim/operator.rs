@@ -33,7 +33,14 @@ fn apply_operator_with_capture(
         Operator::Yank => yank_range(state, range),
         Operator::Delete | Operator::Change => {
             if capture {
-                state.capture();
+                if range.kind == RangeKind::Linewise {
+                    let cursor = state.cursor;
+                    state.cursor.col = 0;
+                    state.capture();
+                    state.cursor = cursor;
+                } else {
+                    state.capture();
+                }
             }
             let yanked = extract_range(state, range);
             state.clip.set_text(yanked.to_string());

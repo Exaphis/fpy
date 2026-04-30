@@ -438,8 +438,8 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         (
             KeyEventRegister::n(vec![KeyInput::shift('A')]),
-            SwitchMode(EditorMode::Insert)
-                .chain(MoveToEndOfLine())
+            MoveToEndOfLine()
+                .chain(SwitchMode(EditorMode::Insert))
                 .chain(MoveForward(1))
                 .into(),
         ),

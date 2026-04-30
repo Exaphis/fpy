@@ -418,6 +418,10 @@ fn move_big_word_forward_to_end_of_word(state: &mut EditorState) {
         (true, false) => Index2::new(state.cursor.row.saturating_add(1), 0),
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),
     };
+    if state.lines.len_col(start_index.row).unwrap_or_default() == 0 {
+        state.cursor = start_index;
+        return;
+    }
     skip_empty_lines(&state.lines, &mut start_index.row);
     while start_index.row > 0 && state.lines.get(Index2::new(start_index.row, 0)).is_none() {
         start_index.row -= 1;

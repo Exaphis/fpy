@@ -62,13 +62,13 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
     let single_line_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "2h", "2l", "2w",
-        "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e",
+        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "OX<Esc>",
+        "2dd", "2h", "2l", "2w", "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e",
     ];
     let multiline_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "2h", "2l", "2w",
-        "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e", "2j", "2k",
+        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "OX<Esc>",
+        "2dd", "2h", "2l", "2w", "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e", "2j", "2k",
     ];
     let initials = [
         "one two three",
@@ -201,6 +201,10 @@ fn run_vim_steps_with_trace(vim: &str, initial: &str, steps: &[&str]) -> Vec<Sna
         normal_commands.push_str(&format!(
             "call writefile([line('.') . ':' . col('.') . ':' . join(getline(1, '$'), '\\n')], {trace_file_arg}, 'a')\n"
         ));
+        // Ex commands are otherwise coalesced into a single undo block in Vim's
+        // batch mode. Resetting the option to itself forces a new undo block so
+        // `u` behaves like it does when these atoms are typed interactively.
+        normal_commands.push_str("let &undolevels = &undolevels\n");
     }
     let file_arg = vim_single_quoted_path(&file);
     let cursor_file_arg = vim_single_quoted_path(&cursor_file);

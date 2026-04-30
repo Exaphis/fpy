@@ -304,10 +304,11 @@ fn execute_operator_motion(
     let plain = key_input.modifiers == input::Modifiers::NONE;
 
     if plain && key_input.key == Char(op) {
-        let range = TextRange::linewise(
-            editor.cursor.row,
-            editor.cursor.row.saturating_add(count.saturating_sub(1)),
-        );
+        let end_row = editor.cursor.row.saturating_add(count.saturating_sub(1));
+        if count > 1 && end_row >= editor.lines.iter_row().count() {
+            return true;
+        }
+        let range = TextRange::linewise(editor.cursor.row, end_row);
         apply_operator(op, editor, range);
         return true;
     }

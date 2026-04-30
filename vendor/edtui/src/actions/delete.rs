@@ -22,8 +22,11 @@ pub struct RemoveChar(pub usize);
 impl Execute for RemoveChar {
     fn execute(&mut self, state: &mut EditorState) {
         state.preferred_col = None;
-        state.capture();
         state.clamp_column();
+        if is_out_of_bounds(&state.lines, &state.cursor) {
+            return;
+        }
+        state.capture();
         for _ in 0..self.0 {
             let lines = &mut state.lines;
             let index = &mut state.cursor;
@@ -450,7 +453,11 @@ impl Execute for DeleteLine {
         if state.lines.is_empty() {
             return;
         }
+        let row_count = state.lines.iter_row().count();
         let end = state.cursor.row.saturating_add(self.0.saturating_sub(1));
+        if self.0 > 1 && end >= row_count {
+            return;
+        }
         vim_operator::apply_operator(
             state,
             Operator::Delete,

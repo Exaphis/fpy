@@ -61,8 +61,18 @@ impl EditorState {
                 lines: self.lines.clone(),
                 cursor: self.cursor,
             };
+            let restore_cursor = if self.lines.iter_row().count() == prev.lines.iter_row().count() {
+                current.cursor
+            } else {
+                prev.cursor
+            };
             self.lines = prev.lines;
-            self.cursor = prev.cursor;
+            self.cursor = restore_cursor;
+            self.cursor.row = self.cursor.row.min(self.lines.len().saturating_sub(1));
+            self.cursor.col = self
+                .cursor
+                .col
+                .min(self.lines.len_col(self.cursor.row).unwrap_or_default().saturating_sub(1));
             self.redo.push(current);
         }
     }
