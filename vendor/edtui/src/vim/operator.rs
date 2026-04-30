@@ -33,7 +33,10 @@ fn apply_operator_with_capture(
         Operator::Yank => yank_range(state, range),
         Operator::Delete | Operator::Change => {
             if capture {
-                if range.kind == RangeKind::Linewise {
+                if range.kind == RangeKind::Linewise
+                    && !(range.start.row == 0
+                        && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
+                {
                     let cursor = state.cursor;
                     state.cursor.col = 0;
                     state.capture();

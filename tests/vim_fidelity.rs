@@ -63,12 +63,14 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
     let single_line_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
         "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "OX<Esc>",
+        "iX<Enter>Y<Esc>", "aX<Enter>Y<Esc>",
         "2dd", "2h", "2l", "2w", "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e",
         "u", "<C-r>",
     ];
     let multiline_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
         "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "OX<Esc>",
+        "iX<Enter>Y<Esc>", "aX<Enter>Y<Esc>",
         "2dd", "2h", "2l", "2w", "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e", "2j", "2k",
         "u", "<C-r>",
     ];

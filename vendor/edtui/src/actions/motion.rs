@@ -163,9 +163,10 @@ fn move_word_forward(state: &mut EditorState) {
 
     for (next_char, index) in state.lines.iter().from(start_index) {
         if index.row != state.cursor.row {
-            state.cursor = index;
-            skip_empty_lines(&state.lines, &mut state.cursor.row);
-            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
+            state.cursor = Index2::new(index.row, 0);
+            if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+                return;
+            }
             skip_whitespace_across_lines(state);
             return;
         }
@@ -178,8 +179,9 @@ fn move_word_forward(state: &mut EditorState) {
 
     if state.cursor.row + 1 < state.lines.iter_row().count() {
         state.cursor = Index2::new(state.cursor.row + 1, 0);
-        skip_empty_lines(&state.lines, &mut state.cursor.row);
-        state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
+        if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+            return;
+        }
         skip_whitespace_across_lines(state);
         return;
     }
