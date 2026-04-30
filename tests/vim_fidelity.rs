@@ -62,11 +62,13 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
     let single_line_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "2w", "2b", "2e", "3w", "3b", "3e",
+        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "2w", "2b", "2e",
+        "2W", "2B", "2E", "2x", "3w", "3b", "3e",
     ];
     let multiline_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "2w", "2b", "2e", "3w", "3b", "3e", "2j", "2k",
+        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "2w", "2b", "2e",
+        "2W", "2B", "2E", "2x", "3w", "3b", "3e", "2j", "2k",
     ];
     let initials = [
         "one two three",

@@ -32,13 +32,13 @@ impl Execute for RemoveChar {
                 return;
             }
 
+            let removed_col = index.col;
             let _ = lines.remove(*index);
-            index.col = index.col.min(
-                lines
-                    .len_col(index.row)
-                    .unwrap_or_default()
-                    .saturating_sub(1),
-            );
+            let len_col = lines.len_col(index.row).unwrap_or_default();
+            index.col = index.col.min(len_col.saturating_sub(1));
+            if removed_col >= len_col {
+                break;
+            }
         }
     }
 }
