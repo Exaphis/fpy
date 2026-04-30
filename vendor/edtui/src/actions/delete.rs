@@ -160,6 +160,9 @@ impl Execute for DeleteWordForward {
 }
 
 fn delete_word_forward(state: &mut EditorState) {
+    if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+        return;
+    }
     if state
         .lines
         .iter_row()
@@ -776,19 +779,25 @@ impl Execute for JoinLineWithLineBelow {
         state.capture();
 
         let row = state.cursor.row;
+        let left_had_trailing_whitespace = rows[row]
+            .chars()
+            .last()
+            .is_some_and(|ch| ch.is_ascii_whitespace());
         let left = rows[row].trim_end().to_string();
         let right = rows.remove(row + 1).trim_start().to_string();
         let join_col = left.chars().count();
-        rows[row] = if left.is_empty() || right.is_empty() {
-            format!("{left}{right}")
-        } else {
+        let joined_with_space = !left.is_empty() && !right.is_empty();
+        rows[row] = if joined_with_space {
             format!("{left} {right}")
+        } else {
+            format!("{left}{right}")
         };
         state.lines = Lines::default();
         for row in rows {
             state.lines.push(row.chars().collect::<Vec<_>>());
         }
-        state.cursor.col = join_col.min(state.lines.len_col(row).unwrap_or_default().saturating_sub(1));
+        let cursor_col = join_col + usize::from(joined_with_space && left_had_trailing_whitespace);
+        state.cursor.col = cursor_col.min(state.lines.len_col(row).unwrap_or_default().saturating_sub(1));
     }
 }
 

@@ -55,6 +55,9 @@ impl Execute for AppendNewline {
         }
         state.capture();
         state.cursor.col = 0;
+        if state.lines.is_empty() {
+            state.lines.push(vec![]);
+        }
         for _ in 0..self.0 {
             if !state.lines.is_empty() {
                 state.cursor.row += 1;
@@ -78,6 +81,9 @@ impl Execute for InsertNewline {
     fn execute(&mut self, state: &mut EditorState) {
         if state.view.single_line {
             return;
+        }
+        if state.lines.is_empty() {
+            state.lines.push(Vec::new());
         }
         state.cursor.col = 0;
         for _ in 0..self.0 {

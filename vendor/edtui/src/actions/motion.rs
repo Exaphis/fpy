@@ -233,6 +233,10 @@ fn move_word_forward_to_end_of_word(state: &mut EditorState) {
         start_index.row -= 1;
     }
     skip_whitespace(&state.lines, &mut start_index);
+    if state.lines.len_col(start_index.row).unwrap_or_default() == 0 {
+        state.cursor = start_index;
+        return;
+    }
     let start_char_class = CharacterClass::from(state.lines.get(start_index));
 
     for (next_char, index) in state.lines.iter().from(start_index) {
@@ -397,6 +401,10 @@ fn move_big_word_forward_to_end_of_word(state: &mut EditorState) {
         start_index.row -= 1;
     }
     skip_whitespace(&state.lines, &mut start_index);
+    if state.lines.len_col(start_index.row).unwrap_or_default() == 0 {
+        state.cursor = start_index;
+        return;
+    }
     for (next_char, index) in state.lines.iter().from(start_index) {
         if next_char.is_some_and(char::is_ascii_whitespace) {
             if index == start_index
