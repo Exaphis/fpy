@@ -139,7 +139,7 @@ fn move_word_forward(state: &mut EditorState) {
 
     let start_index = match (
         state.lines.is_last_col(state.cursor),
-        state.lines.is_last_row(state.cursor),
+        state.cursor.row + 1 >= state.lines.iter_row().count(),
     ) {
         (true, true) => return,
         (true, false) => {
@@ -153,6 +153,7 @@ fn move_word_forward(state: &mut EditorState) {
         if index.row != state.cursor.row {
             state.cursor = index;
             skip_empty_lines(&state.lines, &mut state.cursor.row);
+            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
             skip_whitespace_across_lines(state);
             return;
         }
@@ -163,13 +164,10 @@ fn move_word_forward(state: &mut EditorState) {
         }
     }
 
-    if state
-        .lines
-        .get(Index2::new(state.cursor.row.saturating_add(1), 0))
-        .is_some()
-    {
+    if state.cursor.row + 1 < state.lines.iter_row().count() {
         state.cursor = Index2::new(state.cursor.row + 1, 0);
         skip_empty_lines(&state.lines, &mut state.cursor.row);
+        state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
         skip_whitespace_across_lines(state);
         return;
     }

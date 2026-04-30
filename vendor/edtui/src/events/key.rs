@@ -137,7 +137,7 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         // Go into normal mode
         (
             KeyEventRegister::i(vec![KeyInput::new(KeyCode::Esc)]),
-            SwitchMode(EditorMode::Normal).into(),
+            SwitchMode(EditorMode::Normal).chain(MoveBackward(1)).into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::new(KeyCode::Esc)]),

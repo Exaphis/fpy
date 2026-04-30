@@ -763,8 +763,11 @@ pub struct JoinLineWithLineBelow;
 
 impl Execute for JoinLineWithLineBelow {
     fn execute(&mut self, state: &mut EditorState) {
-        let text = state.lines.to_string();
-        let mut rows: Vec<String> = text.lines().map(ToString::to_string).collect();
+        let mut rows: Vec<String> = state
+            .lines
+            .iter_row()
+            .map(|row| row.iter().collect::<String>())
+            .collect();
         if state.cursor.row + 1 >= rows.len() {
             return;
         }
@@ -785,7 +788,7 @@ impl Execute for JoinLineWithLineBelow {
         for row in rows {
             state.lines.push(row.chars().collect::<Vec<_>>());
         }
-        state.cursor.col = join_col;
+        state.cursor.col = join_col.min(state.lines.len_col(row).unwrap_or_default().saturating_sub(1));
     }
 }
 

@@ -62,11 +62,11 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
     let single_line_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J",
+        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>",
     ];
     let multiline_atoms = [
         "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J",
+        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>",
     ];
     let initials = [
         "one two three",
@@ -193,9 +193,9 @@ fn run_vim_steps_with_trace(vim: &str, initial: &str, steps: &[&str]) -> Vec<Sna
     let mut normal_commands = String::new();
     let trace_file_arg = vim_single_quoted_path(&trace_file);
     for step in steps {
-        normal_commands.push_str("normal! ");
+        normal_commands.push_str("execute \"normal! ");
         normal_commands.push_str(&vim_normal_execute_arg(step));
-        normal_commands.push('\n');
+        normal_commands.push_str("\"\n");
         normal_commands.push_str(&format!(
             "call writefile([line('.') . ':' . col('.') . ':' . join(getline(1, '$'), '\\n')], {trace_file_arg}, 'a')\n"
         ));
