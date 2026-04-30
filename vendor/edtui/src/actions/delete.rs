@@ -161,6 +161,24 @@ impl Execute for DeleteWordForward {
 
 fn delete_word_forward(state: &mut EditorState) {
     if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+        if state.cursor.row + 1 < state.lines.iter_row().count() {
+            let mut rows: Vec<String> = state
+                .lines
+                .iter_row()
+                .map(|row| row.iter().collect::<String>())
+                .collect();
+            rows.remove(state.cursor.row);
+            state.lines = Lines::default();
+            for row in rows {
+                state.lines.push(row.chars().collect::<Vec<_>>());
+            }
+            state.cursor.col = state
+                .lines
+                .iter_row()
+                .nth(state.cursor.row)
+                .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+                .unwrap_or_default();
+        }
         return;
     }
     if state

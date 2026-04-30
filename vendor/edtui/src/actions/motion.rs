@@ -43,6 +43,7 @@ impl Execute for MoveBackward {
             let max_col = max_col(&state.lines, &state.cursor, state.mode);
             if state.cursor.col > max_col {
                 state.cursor.col = max_col;
+                continue;
             }
             state.cursor.col = state.cursor.col.saturating_sub(1);
         }
@@ -222,12 +223,16 @@ impl Execute for MoveWordForwardToEndOfWord {
 fn move_word_forward_to_end_of_word(state: &mut EditorState) {
     let mut start_index = match (
         state.lines.is_last_col(state.cursor),
-        state.lines.is_last_row(state.cursor),
+        state.cursor.row + 1 >= state.lines.iter_row().count(),
     ) {
         (true, true) => return,
         (true, false) => Index2::new(state.cursor.row.saturating_add(1), 0),
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),
     };
+    if state.lines.len_col(start_index.row).unwrap_or_default() == 0 {
+        state.cursor = Index2::new(start_index.row, 0);
+        return;
+    }
     skip_empty_lines(&state.lines, &mut start_index.row);
     while start_index.row > 0 && state.lines.get(Index2::new(start_index.row, 0)).is_none() {
         start_index.row -= 1;
@@ -287,7 +292,14 @@ fn move_word_backward(state: &mut EditorState) {
         return;
     }
 
-    if start_index.col == 0 {
+    if start_index.col == 0
+        || (start_index.row > 0
+            && state
+                .lines
+                .iter_row()
+                .nth(start_index.row)
+                .is_some_and(|row| row.iter().take(start_index.col).all(|ch| ch.is_ascii_whitespace())))
+    {
         start_index.row = start_index.row.saturating_sub(1);
         start_index.col = state.lines.last_col_index(start_index.row);
     } else {
@@ -449,7 +461,14 @@ fn move_big_word_backward(state: &mut EditorState) {
     if start_index.row == 0 && start_index.col == 0 {
         return;
     }
-    if start_index.col == 0 {
+    if start_index.col == 0
+        || (start_index.row > 0
+            && state
+                .lines
+                .iter_row()
+                .nth(start_index.row)
+                .is_some_and(|row| row.iter().take(start_index.col).all(|ch| ch.is_ascii_whitespace())))
+    {
         start_index.row = start_index.row.saturating_sub(1);
         start_index.col = state.lines.last_col_index(start_index.row);
     } else {
