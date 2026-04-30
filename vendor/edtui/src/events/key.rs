@@ -16,8 +16,9 @@ use crate::actions::{
     Action, AppendCharToSearch, AppendNewline, Chainable, ChangeToEndOfLine, DeleteChar, Execute,
     FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, JoinLineWithLineBelow, LineBreak,
     MoveBackward, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
-    MoveForward, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket,
-    MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+    MoveForward, MoveForwardForInsert, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst,
+    MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward,
+    MoveWordForwardToEndOfWord,
     Paste, Redo, RemoveChar, RemoveCharFromSearch, SelectCurrentSearch, StopSearch, SwitchMode,
     Undo,
 };
@@ -192,7 +193,9 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         // Go into insert mode and move one char forward
         (
             KeyEventRegister::n(vec![KeyInput::new('a')]),
-            SwitchMode(EditorMode::Insert).chain(MoveForward(1)).into(),
+            MoveForwardForInsert(1)
+                .chain(SwitchMode(EditorMode::Insert))
+                .into(),
         ),
         // Move cursor forward
         (
@@ -434,7 +437,7 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         // Move cursor to start/first/last position and enter insert mode
         (
             KeyEventRegister::n(vec![KeyInput::shift('I')]),
-            SwitchMode(EditorMode::Insert).chain(MoveToFirst()).into(),
+            MoveToFirst().chain(SwitchMode(EditorMode::Insert)).into(),
         ),
         (
             KeyEventRegister::n(vec![KeyInput::shift('A')]),

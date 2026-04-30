@@ -31,8 +31,8 @@ pub use self::delete::{
 pub use self::insert::{AppendNewline, InsertChar, InsertNewline, LineBreak};
 pub use self::motion::{
     MoveBackward, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
-    MoveForward, MoveHalfPageDown, MoveHalfPageUp, MovePageDown, MovePageUp, MoveToEndOfLine,
-    MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward,
+    MoveForward, MoveForwardForInsert, MoveHalfPageDown, MoveHalfPageUp, MovePageDown, MovePageUp,
+    MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward,
     MoveWordForward, MoveWordForwardToEndOfWord,
 };
 pub use self::search::{
@@ -46,6 +46,7 @@ use self::search::{StartBackwardSearch, StartSearch};
 pub enum Action {
     SwitchMode(SwitchMode),
     MoveForward(MoveForward),
+    MoveForwardForInsert(MoveForwardForInsert),
     MoveBackward(MoveBackward),
     MoveUp(MoveUp),
     MoveDown(MoveDown),
@@ -152,7 +153,9 @@ pub struct SwitchMode(pub EditorMode);
 
 impl Execute for SwitchMode {
     fn execute(&mut self, state: &mut EditorState) {
-        state.clamp_column();
+        if self.0 != EditorMode::Insert {
+            state.clamp_column();
+        }
         match self.0 {
             EditorMode::Normal => {
                 state.selection = None;

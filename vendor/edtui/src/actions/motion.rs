@@ -13,6 +13,17 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Copy)]
+pub struct MoveForwardForInsert(pub usize);
+
+impl Execute for MoveForwardForInsert {
+    fn execute(&mut self, state: &mut EditorState) {
+        state.preferred_col = None;
+        let len = state.lines.len_col(state.cursor.row).unwrap_or_default();
+        state.cursor.col = state.cursor.col.saturating_add(self.0).min(len);
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
 pub struct MoveForward(pub usize);
 
 impl Execute for MoveForward {
@@ -531,6 +542,7 @@ pub struct MoveToFirst();
 
 impl Execute for MoveToFirst {
     fn execute(&mut self, state: &mut EditorState) {
+        state.discard_redundant_undo_top();
         state.preferred_col = None;
         state.cursor.col = 0;
         skip_whitespace(&state.lines, &mut state.cursor);

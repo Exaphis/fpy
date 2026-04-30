@@ -23,10 +23,10 @@ impl Execute for RemoveChar {
     fn execute(&mut self, state: &mut EditorState) {
         state.preferred_col = None;
         state.clamp_column();
+        state.capture();
         if is_out_of_bounds(&state.lines, &state.cursor) {
             return;
         }
-        state.capture();
         for _ in 0..self.0 {
             let lines = &mut state.lines;
             let index = &mut state.cursor;

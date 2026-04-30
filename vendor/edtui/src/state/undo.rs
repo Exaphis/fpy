@@ -23,6 +23,10 @@ impl Stack {
         self.inner.pop()
     }
 
+    pub(crate) fn peek(&self) -> Option<&UndoState> {
+        self.inner.last()
+    }
+
     pub(crate) fn push(&mut self, value: UndoState) {
         self.inner.push(value);
         if self.len() > self.max_size {
@@ -55,20 +59,28 @@ impl EditorState {
         self.redo = Stack::new();
     }
 
+    pub(crate) fn discard_redundant_undo_top(&mut self) {
+        if self
+            .undo
+            .peek()
+            .is_some_and(|prev| prev.lines.to_string() == self.lines.to_string())
+        {
+            let _ = self.undo.pop();
+        }
+    }
+
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             let current = UndoState {
                 lines: self.lines.clone(),
                 cursor: self.cursor,
             };
-            let restore_cursor = if self.lines.iter_row().count() == prev.lines.iter_row().count() {
-                current.cursor
-            } else {
-                prev.cursor
-            };
             self.lines = prev.lines;
-            self.cursor = restore_cursor;
-            self.cursor.row = self.cursor.row.min(self.lines.len().saturating_sub(1));
+            self.cursor = prev.cursor;
+            self.cursor.row = self
+                .cursor
+                .row
+                .min(self.lines.iter_row().count().saturating_sub(1));
             self.cursor.col = self
                 .cursor
                 .col
