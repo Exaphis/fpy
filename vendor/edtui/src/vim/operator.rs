@@ -31,20 +31,12 @@ fn apply_operator_with_capture(
 ) {
     match operator {
         Operator::Yank => yank_range(state, range),
+        Operator::Delete | Operator::Change if range.kind == RangeKind::Linewise => {
+            apply_linewise_edit(state, operator, range, capture);
+        }
         Operator::Delete | Operator::Change => {
             if capture {
-                if range.kind == RangeKind::Linewise
-                    && range.start.row == range.end.row
-                    && !(range.start.row == 0
-                        && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
-                {
-                    let cursor = state.cursor;
-                    state.cursor.col = 0;
-                    state.capture();
-                    state.cursor = cursor;
-                } else {
-                    state.capture();
-                }
+                state.capture();
             }
             let yanked = extract_range(state, range);
             state.clip.set_text(yanked.to_string());
@@ -61,6 +53,51 @@ fn yank_range(state: &mut EditorState, range: TextRange) {
     if !text.is_empty() {
         state.clip.set_text(text);
     }
+}
+
+fn apply_linewise_edit(
+    state: &mut EditorState,
+    operator: Operator,
+    range: TextRange,
+    capture: bool,
+) {
+    if capture {
+        capture_linewise_undo_state(state, range);
+    }
+    let yanked = extract_linewise(state, range.start.row, range.end.row);
+    state.clip.set_text(yanked.to_string());
+    place_cursor_after_linewise_edit(state, range.start.row);
+    if operator == Operator::Change {
+        state.mode = EditorMode::Insert;
+    }
+}
+
+fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
+    if should_restore_single_line_delete_to_column_zero(state, range) {
+        let cursor = state.cursor;
+        state.cursor.col = 0;
+        state.capture();
+        state.cursor = cursor;
+    } else {
+        state.capture();
+    }
+}
+
+fn should_restore_single_line_delete_to_column_zero(state: &EditorState, range: TextRange) -> bool {
+    range.start.row == range.end.row
+        && !(range.start.row == 0
+            && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
+}
+
+fn place_cursor_after_linewise_edit(state: &mut EditorState, deleted_start_row: usize) {
+    state.cursor.row = deleted_start_row.min(state.lines.len().saturating_sub(1));
+    state.cursor.col = state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+        .unwrap_or(0);
+    clamp_cursor(state);
 }
 
 fn copy_range(lines: &Lines, range: TextRange) -> String {
@@ -138,13 +175,6 @@ fn extract_linewise(state: &mut EditorState, start_row: usize, end_row: usize) -
     if state.lines.is_empty() {
         state.lines.push(Vec::<char>::new());
     }
-    state.cursor.row = start_row.min(state.lines.len().saturating_sub(1));
-    state.cursor.col = state
-        .lines
-        .iter_row()
-        .nth(state.cursor.row)
-        .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
-        .unwrap_or(0);
     Lines::from(text)
 }
 

@@ -19,11 +19,28 @@ struct Case {
     keys: &'static str,
 }
 
-const CASES: &[Case] = &[Case {
-    name: "delete_word",
-    initial: "one two three",
-    keys: "wdw",
-}];
+const CASES: &[Case] = &[
+    Case {
+        name: "delete_word",
+        initial: "one two three",
+        keys: "wdw",
+    },
+    Case {
+        name: "linewise_delete_moves_to_indent",
+        initial: "def test_1234(x: int):\n    foobar\ntrailer",
+        keys: "dd",
+    },
+    Case {
+        name: "counted_linewise_delete_moves_to_indent",
+        initial: "first\nsecond\n    foobar\ntrailer",
+        keys: "2dd",
+    },
+    Case {
+        name: "linewise_delete_whole_buffer_leaves_empty_line",
+        initial: "only line",
+        keys: "dd",
+    },
+];
 
 #[test]
 #[ignore = "requires a real Vim binary; run with FPY_VIM=vim cargo test --test vim_fidelity -- --ignored"]
