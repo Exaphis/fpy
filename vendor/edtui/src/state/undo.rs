@@ -91,9 +91,11 @@ impl EditorState {
 
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
+            let current_lines = self.lines.clone();
+            let current_cursor = redo_cursor_for_state(&prev.lines, &current_lines).unwrap_or(self.cursor);
             let current = UndoState {
-                lines: self.lines.clone(),
-                cursor: self.cursor,
+                lines: current_lines,
+                cursor: current_cursor,
             };
             self.lines = prev.lines;
             self.cursor = prev.cursor;
@@ -120,4 +122,25 @@ impl EditorState {
             self.undo.push(current);
         }
     }
+}
+
+fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
+    if after.iter_row().count() <= before.iter_row().count() {
+        return None;
+    }
+    let before_rows: Vec<Vec<char>> = before.iter_row().map(|row| row.to_vec()).collect();
+    for (row_index, after_row) in after.iter_row().enumerate() {
+        let Some(before_row) = before_rows.get(row_index) else {
+            return Some(Index2::new(row_index, 0));
+        };
+        for (col_index, after_char) in after_row.iter().enumerate() {
+            if before_row.get(col_index) != Some(after_char) {
+                return Some(Index2::new(row_index, col_index));
+            }
+        }
+        if after_row.len() != before_row.len() {
+            return Some(Index2::new(row_index, before_row.len()));
+        }
+    }
+    None
 }

@@ -33,6 +33,15 @@ impl VimCommandExecutor {
         state: &mut EditorState,
         f: impl FnOnce(&mut EditorState) -> bool,
     ) -> bool {
-        transaction::in_undo_transaction(state, f)
+        let mode_before = state.mode;
+        state.begin_undo_transaction();
+        let handled = f(state);
+        let entering_insert = handled
+            && matches!(mode_before, EditorMode::Normal | EditorMode::Visual)
+            && state.mode == EditorMode::Insert;
+        if !entering_insert {
+            state.end_undo_transaction();
+        }
+        handled
     }
 }

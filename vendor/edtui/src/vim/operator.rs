@@ -1,4 +1,4 @@
-use jagged::index::RowIndex;
+use jagged::index::{Index2, RowIndex};
 
 use crate::{clipboard::ClipboardTrait, EditorMode, EditorState, Lines};
 
@@ -39,6 +39,14 @@ pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
         return;
     }
     apply_operator(state, Operator::Delete, range);
+}
+
+pub(crate) fn change_to_end_of_line(state: &mut EditorState) {
+    let Some(range) = super::motion::line_end_range(state) else {
+        state.mode = EditorMode::Insert;
+        return;
+    };
+    apply_operator(state, Operator::Change, range);
 }
 
 pub(crate) fn join_line_with_line_below(state: &mut EditorState) {
@@ -99,9 +107,17 @@ fn apply_operator_with_capture(
             }
             let yanked = extract_range(state, range);
             state.clip.set_text(yanked.to_string());
-            clamp_cursor(state);
             if operator == Operator::Change {
+                state.cursor = Index2::new(
+                    range.start.row,
+                    range
+                        .start
+                        .col
+                        .min(state.lines.len_col(range.start.row).unwrap_or_default()),
+                );
                 state.mode = EditorMode::Insert;
+            } else {
+                clamp_cursor(state);
             }
         }
     }

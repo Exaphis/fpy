@@ -171,6 +171,9 @@ impl VimCommandContext<'_> {
             (Char('D'), input::Modifiers::SHIFT) => {
                 vim_operator::delete_to_end_of_line(editor);
             }
+            (Char('C'), input::Modifiers::SHIFT) => {
+                vim_operator::change_to_end_of_line(editor);
+            }
             (Char('J'), input::Modifiers::SHIFT) => {
                 vim_operator::join_line_with_line_below(editor);
             }

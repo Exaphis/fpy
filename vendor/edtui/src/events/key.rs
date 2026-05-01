@@ -13,7 +13,7 @@ use crate::actions::search::{StartBackwardSearch, StartSearch};
 #[cfg(feature = "system-editor")]
 use crate::actions::OpenSystemEditor;
 use crate::actions::{
-    Action, AppendCharToSearch, AppendNewline, Chainable, ChangeToEndOfLine, DeleteChar, Execute,
+    Action, AppendCharToSearch, AppendNewline, Chainable, DeleteChar, Execute,
     FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, LineBreak, MoveBackward,
     MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
     MoveForward, MoveForwardForInsert, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst,
@@ -451,11 +451,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             KeyEventRegister::i(vec![KeyInput::new(KeyCode::Delete)]),
             DeleteCharForward(1).into(),
         ),
-        // Delete/change from the cursor to the end of the line
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('C')]),
-            ChangeToEndOfLine.into(),
-        ),
         // Undo
         (KeyEventRegister::n(vec![KeyInput::new('u')]), Undo.into()),
         // Redo
@@ -786,12 +781,16 @@ impl KeyEventHandler {
             return;
         }
 
-        if mode == EditorMode::Normal
-            && VimCommandExecutor::execute_handled(state, |state| {
+        if mode == EditorMode::Normal {
+            let handled = VimCommandExecutor::execute_handled(state, |state| {
                 self.vim_command_context().handle_normal_key(key_input, state)
-            })
-        {
-            return;
+            });
+            if handled {
+                if state.mode == EditorMode::Insert {
+                    self.vim_insert_session_active = true;
+                }
+                return;
+            }
         }
         if mode == EditorMode::Visual
             && VimCommandExecutor::execute_handled(state, |state| {
