@@ -52,6 +52,9 @@ pub struct EditorState {
     /// Desired column for repeated Vim-style vertical movement.
     pub(crate) preferred_col: Option<usize>,
 
+    /// Whether the last Vim operator populated the clipboard linewise.
+    pub(crate) vim_last_yank_linewise: bool,
+
     /// Nesting depth for undo captures coalesced into a single transaction.
     pub(crate) undo_transaction_depth: usize,
 
@@ -98,6 +101,7 @@ impl EditorState {
             redo: Stack::new(),
             clip: Clipboard::default(),
             preferred_col: None,
+            vim_last_yank_linewise: false,
             undo_transaction_depth: 0,
             undo_transaction_captured: false,
             #[cfg(feature = "system-editor")]

@@ -25,7 +25,9 @@ pub(crate) fn apply_operator_without_capture(
 
 pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
     let Some(range) = super::motion::char_span_range(state, count) else {
-        state.capture();
+        if state.lines.iter_row().any(|row| !row.is_empty()) || !state.vim_last_yank_linewise {
+            state.capture();
+        }
         return;
     };
     apply_operator(state, Operator::Delete, range);
@@ -107,6 +109,7 @@ fn apply_operator_with_capture(
             }
             let yanked = extract_range(state, range);
             state.clip.set_text(yanked.to_string());
+            state.vim_last_yank_linewise = false;
             if operator == Operator::Change {
                 state.cursor = Index2::new(
                     range.start.row,
@@ -127,6 +130,7 @@ fn yank_range(state: &mut EditorState, range: TextRange) {
     let text = copy_range(&state.lines, range);
     if !text.is_empty() {
         state.clip.set_text(text);
+        state.vim_last_yank_linewise = range.kind == RangeKind::Linewise;
     }
 }
 
@@ -141,6 +145,7 @@ fn apply_linewise_edit(
     }
     let yanked = extract_linewise(state, range.start.row, range.end.row);
     state.clip.set_text(yanked.to_string());
+    state.vim_last_yank_linewise = true;
     place_cursor_after_linewise_edit(state, range.start.row);
     if operator == Operator::Change {
         state.mode = EditorMode::Insert;

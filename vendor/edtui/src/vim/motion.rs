@@ -113,20 +113,15 @@ pub(crate) fn motion_effect(
 
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
     use crate::actions::{
-        Execute, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
-        MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+        Execute, MoveBigWordBackward, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp,
+        MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
     };
 
     match motion {
         MotionKind::WordForward => MoveWordForward(1).execute(state),
         MotionKind::WordEnd => MoveWordForwardToEndOfWord(1).execute(state),
         MotionKind::WordBackward => MoveWordBackward(1).execute(state),
-        MotionKind::BigWordForward if next_row_is_empty(state) => {
-            state.preferred_col = None;
-            state.cursor.row += 1;
-            state.cursor.col = 0;
-        }
-        MotionKind::BigWordForward => MoveBigWordForward(1).execute(state),
+        MotionKind::BigWordForward => move_big_word_forward_once(state),
         MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
         MotionKind::BigWordBackward => MoveBigWordBackward(1).execute(state),
         MotionKind::LineStart => {
@@ -169,14 +164,22 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
     Some(())
 }
 
-fn next_row_is_empty(state: &EditorState) -> bool {
-    state.lines.is_last_col(state.cursor)
-        && state.cursor.row + 1 < state.lines.iter_row().count()
-        && state
-            .lines
-            .len_col(state.cursor.row + 1)
-            .unwrap_or_default()
-            == 0
+fn move_big_word_forward_once(state: &mut EditorState) {
+    use crate::actions::{Execute, MoveBigWordForward};
+
+    let start_row = state.cursor.row;
+    MoveBigWordForward(1).execute(state);
+    if state.cursor.row <= start_row {
+        return;
+    }
+    for row in start_row + 1..=state.cursor.row {
+        if state.lines.len_col(row).unwrap_or_default() == 0 {
+            state.preferred_col = None;
+            state.cursor.row = row;
+            state.cursor.col = 0;
+            return;
+        }
+    }
 }
 
 pub(crate) fn word_forward_range(state: &EditorState) -> Option<TextRange> {

@@ -125,9 +125,6 @@ impl EditorState {
 }
 
 fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
-    if after.iter_row().count() <= before.iter_row().count() {
-        return None;
-    }
     let before_rows: Vec<Vec<char>> = before.iter_row().map(|row| row.to_vec()).collect();
     for (row_index, after_row) in after.iter_row().enumerate() {
         let Some(before_row) = before_rows.get(row_index) else {
@@ -139,7 +136,12 @@ fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
             }
         }
         if after_row.len() != before_row.len() {
-            return Some(Index2::new(row_index, before_row.len()));
+            let col = if after_row.len() < before_row.len() {
+                after_row.len().saturating_sub(1)
+            } else {
+                before_row.len()
+            };
+            return Some(Index2::new(row_index, col));
         }
     }
     None
