@@ -1,5 +1,6 @@
 use crate::{
     events::key::input::{self, KeyInput},
+    helper::skip_whitespace,
     state::selection::set_selection_with_lines,
     EditorMode, EditorState,
 };
@@ -98,6 +99,29 @@ impl VimCommandContext<'_> {
         editor: &mut EditorState,
     ) -> bool {
         use input::KeyCode::Char;
+        if self.lookup.is_empty()
+            && key_input.key == Char('g')
+            && key_input.modifiers == input::Modifiers::NONE
+        {
+            self.lookup.push(key_input);
+            return true;
+        }
+        if self.lookup.len() == 1
+            && self.lookup[0].key == Char('g')
+            && self.lookup[0].modifiers == input::Modifiers::NONE
+        {
+            if key_input.key == Char('g') && key_input.modifiers == input::Modifiers::NONE {
+                let target_row = self.state.command_count().saturating_sub(1);
+                move_to_row(editor, target_row);
+                editor.preferred_col = None;
+                self.lookup.clear();
+                self.state.clear();
+                return true;
+            }
+            self.lookup.clear();
+            self.state.clear();
+            return false;
+        }
         if !self.lookup.is_empty() {
             return false;
         }
@@ -114,6 +138,8 @@ impl VimCommandContext<'_> {
             (Char('k'), input::Modifiers::NONE) => MotionKind::Up,
             (Char('j'), input::Modifiers::NONE) => MotionKind::Down,
             (Char('G'), input::Modifiers::SHIFT) => MotionKind::LastRow,
+            (Char('h'), input::Modifiers::NONE) => MotionKind::Left,
+            (Char('l'), input::Modifiers::NONE) => MotionKind::Right,
             _ => return false,
         };
         if let Some(destination) =
@@ -455,11 +481,9 @@ fn delimiter_text_object_range(prefix: char, ch: char, editor: &EditorState) -> 
 }
 
 fn move_to_row(editor: &mut EditorState, target_row: usize) {
-    let current_row = editor.cursor.row;
-    if target_row == current_row {
-        return;
-    }
     editor.cursor.row = target_row.min(editor.lines.len().saturating_sub(1));
+    editor.cursor.col = 0;
+    skip_whitespace(&editor.lines, &mut editor.cursor);
     editor.clamp_column();
     if editor.mode == EditorMode::Visual {
         set_selection_with_lines(&mut editor.selection, editor.cursor, &editor.lines);

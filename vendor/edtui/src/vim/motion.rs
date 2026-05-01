@@ -22,6 +22,8 @@ pub(crate) enum MotionKind {
     Down,
     FirstRow,
     LastRow,
+    Left,
+    Right,
 }
 
 pub(crate) fn motion_destination(
@@ -76,6 +78,14 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
             state.cursor.row = state.lines.len().saturating_sub(1);
             state.cursor.col = 0;
             skip_whitespace(&state.lines, &mut state.cursor);
+        }
+        MotionKind::Left => {
+            use crate::actions::MoveBackward;
+            MoveBackward(1).execute(state);
+        }
+        MotionKind::Right => {
+            use crate::actions::MoveForward;
+            MoveForward(1).execute(state);
         }
     }
     Some(())
