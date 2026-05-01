@@ -23,6 +23,24 @@ pub(crate) fn apply_operator_without_capture(
     apply_operator_with_capture(state, operator, range, false);
 }
 
+pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
+    let Some(range) = super::motion::char_span_range(state, count) else {
+        state.capture();
+        return;
+    };
+    apply_operator(state, Operator::Delete, range);
+}
+
+pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
+    let Some(range) = super::motion::line_end_range(state) else {
+        return;
+    };
+    if range.start == range.end {
+        return;
+    }
+    apply_operator(state, Operator::Delete, range);
+}
+
 fn apply_operator_with_capture(
     state: &mut EditorState,
     operator: Operator,

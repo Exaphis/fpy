@@ -50,6 +50,7 @@ impl VimCommandContext<'_> {
         editor: &mut EditorState,
     ) -> bool {
         self.handle_visual_line_key(key_input, editor)
+            || self.handle_delete_atom_key(key_input, editor)
             || self.handle_substitute_key(key_input, editor)
             || self.handle_char_motion_key(key_input, editor)
             || self.handle_operator_key(key_input, editor)
@@ -86,6 +87,23 @@ impl VimCommandContext<'_> {
 
     pub(crate) fn take_command_count(&mut self) -> usize {
         self.state.take_command_count()
+    }
+
+    fn handle_delete_atom_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
+        use input::KeyCode::Char;
+        match (key_input.key, key_input.modifiers) {
+            (Char('x'), input::Modifiers::NONE) => {
+                let count = self.take_command_count();
+                vim_operator::delete_char(editor, count);
+            }
+            (Char('D'), input::Modifiers::SHIFT) => {
+                vim_operator::delete_to_end_of_line(editor);
+            }
+            _ => return false,
+        }
+        self.lookup.clear();
+        self.state.clear();
+        true
     }
 
     fn handle_substitute_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {

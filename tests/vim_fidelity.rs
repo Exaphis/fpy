@@ -40,6 +40,21 @@ const CASES: &[Case] = &[
         initial: "only line",
         keys: "dd",
     },
+    Case {
+        name: "delete_char_atom",
+        initial: "abc",
+        keys: "x",
+    },
+    Case {
+        name: "delete_char_count_atom",
+        initial: "abcde",
+        keys: "2x",
+    },
+    Case {
+        name: "delete_to_end_atom",
+        initial: "abc def",
+        keys: "wD",
+    },
 ];
 
 #[test]
