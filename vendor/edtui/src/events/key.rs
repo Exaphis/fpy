@@ -451,10 +451,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             KeyEventRegister::i(vec![KeyInput::new(KeyCode::Delete)]),
             DeleteCharForward(1).into(),
         ),
-        // Undo
-        (KeyEventRegister::n(vec![KeyInput::new('u')]), Undo.into()),
-        // Redo
-        (KeyEventRegister::n(vec![KeyInput::ctrl('r')]), Redo.into()),
         // Copy
         // Paste
         (KeyEventRegister::n(vec![KeyInput::new('p')]), Paste.into()),

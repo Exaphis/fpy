@@ -52,12 +52,24 @@ impl VimCommandContext<'_> {
         key_input: KeyInput,
         editor: &mut EditorState,
     ) -> bool {
-        self.handle_visual_line_key(key_input, editor)
+        self.handle_undo_redo_key(key_input, editor)
+            || self.handle_visual_line_key(key_input, editor)
             || self.handle_standalone_word_motion_key(key_input, editor)
             || self.handle_delete_atom_key(key_input, editor)
             || self.handle_substitute_key(key_input, editor)
             || self.handle_char_motion_key(key_input, editor)
             || self.handle_operator_key(key_input, editor)
+    }
+
+    fn handle_undo_redo_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
+        match (key_input.key, key_input.modifiers) {
+            (input::KeyCode::Char('u'), input::Modifiers::NONE) => editor.undo(),
+            (input::KeyCode::Char('r'), input::Modifiers::CONTROL) => editor.redo(),
+            _ => return false,
+        }
+        self.lookup.clear();
+        self.state.clear();
+        true
     }
 
     fn handle_visual_line_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
