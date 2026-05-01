@@ -9,7 +9,9 @@
 
 use std::{fs, process::Command};
 
-use edtui::{EditorEventHandler, EditorState, Lines, events::KeyInput};
+use edtui::{
+    EditorEventHandler, EditorState, Lines, clipboard::InternalClipboard, events::KeyInput,
+};
 use tempfile::tempdir;
 
 #[derive(Clone, Copy, Debug)]
@@ -17,6 +19,13 @@ struct Case {
     name: &'static str,
     initial: &'static str,
     keys: &'static str,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct StepCase {
+    name: &'static str,
+    initial: &'static str,
+    steps: &'static [&'static str],
 }
 
 const CASES: &[Case] = &[
@@ -137,6 +146,24 @@ const CASES: &[Case] = &[
     },
 ];
 
+const STEP_CASES: &[StepCase] = &[
+    StepCase {
+        name: "dynamic_multiline_construction",
+        initial: "a b c d e",
+        steps: &["idef test_1234(x: int):<Esc>", "o    foobar<Esc>"],
+    },
+    StepCase {
+        name: "dynamic_multiline_construction_undo_open_line",
+        initial: "a b c d e",
+        steps: &["idef test_1234(x: int):<Esc>", "o    foobar<Esc>", "u"],
+    },
+    StepCase {
+        name: "dynamic_multiline_construction_then_delete_line",
+        initial: "a b c d e",
+        steps: &["idef test_1234(x: int):<Esc>", "o    foobar<Esc>", "dd"],
+    },
+];
+
 #[test]
 #[ignore = "requires a real Vim binary; run with FPY_VIM=vim cargo test --test vim_fidelity -- --ignored"]
 fn edtui_matches_real_vim_for_golden_cases() {
@@ -146,6 +173,16 @@ fn edtui_matches_real_vim_for_golden_cases() {
         let edtui = run_edtui_steps(case.initial, &[case.keys]);
         let vim = run_vim(&vim, case.initial, case.keys);
         assert_eq!(edtui, vim, "case {:?} with keys {:?}", case.name, case.keys);
+    }
+
+    for case in STEP_CASES {
+        let edtui = run_edtui_steps(case.initial, case.steps);
+        let vim = run_vim_steps(&vim, case.initial, case.steps);
+        assert_eq!(
+            edtui, vim,
+            "step case {:?} with steps {:?}",
+            case.name, case.steps
+        );
     }
 }
 
@@ -337,6 +374,7 @@ struct Snapshot {
 
 fn run_edtui_steps(initial: &str, steps: &[&str]) -> Snapshot {
     let mut state = EditorState::new(Lines::from(initial));
+    state.set_clipboard(InternalClipboard::default());
     let mut handler = EditorEventHandler::vim_mode();
     for step in steps {
         state.begin_undo_transaction();
@@ -350,6 +388,7 @@ fn run_edtui_steps(initial: &str, steps: &[&str]) -> Snapshot {
 
 fn trace_edtui(initial: &str, steps: &[&str]) -> Vec<Snapshot> {
     let mut state = EditorState::new(Lines::from(initial));
+    state.set_clipboard(InternalClipboard::default());
     let mut handler = EditorEventHandler::vim_mode();
     let mut snapshots = Vec::new();
     for step in steps {
