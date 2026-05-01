@@ -125,6 +125,9 @@ impl EditorState {
 }
 
 fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
+    if after.iter_row().count() < before.iter_row().count() {
+        return Some(Index2::new(0, 0));
+    }
     let before_rows: Vec<Vec<char>> = before.iter_row().map(|row| row.to_vec()).collect();
     for (row_index, after_row) in after.iter_row().enumerate() {
         let Some(before_row) = before_rows.get(row_index) else {

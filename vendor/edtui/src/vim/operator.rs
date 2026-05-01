@@ -68,7 +68,10 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         let pasted_text = text.trim_start_matches('\n').trim_end_matches('\n');
         let pasted_rows = pasted_text.split('\n').map(str::to_string);
         rows.splice(insert_at..insert_at, pasted_rows);
-        state.lines = Lines::from(rows.join("\n"));
+        state.lines = Lines::default();
+        for row in rows {
+            state.lines.push(row.chars().collect::<Vec<_>>());
+        }
         state.cursor.row = insert_at.min(state.lines.iter_row().count().saturating_sub(1));
         state.cursor.col = 0;
         return;
@@ -182,13 +185,18 @@ fn apply_linewise_edit(
     if state.lines.iter_row().count() == 1
         && state.lines.len_col(0).unwrap_or_default() == 0
     {
+        if !state.vim_last_yank_linewise {
+            state.clip.set_text("\n".to_string());
+            state.vim_last_yank_linewise = true;
+        }
         return;
     }
+    let yanked_text = copy_linewise(&state.lines, range.start.row, range.end.row);
     if capture {
         capture_linewise_undo_state(state, range);
     }
-    let yanked = extract_linewise(state, range.start.row, range.end.row);
-    state.clip.set_text(lines_to_text(&yanked));
+    let _ = extract_linewise(state, range.start.row, range.end.row);
+    state.clip.set_text(yanked_text);
     state.vim_last_yank_linewise = true;
     place_cursor_after_linewise_edit(state, range.start.row);
     if operator == Operator::Change {
