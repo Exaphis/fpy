@@ -52,6 +52,12 @@ pub struct EditorState {
     /// Desired column for repeated Vim-style vertical movement.
     pub(crate) preferred_col: Option<usize>,
 
+    /// Whether undo captures should be coalesced into a single transaction.
+    pub(crate) undo_transaction: bool,
+
+    /// Whether the current undo transaction has already captured its initial state.
+    pub(crate) undo_transaction_captured: bool,
+
     /// Flag indicating a system editor was requested.
     #[cfg(feature = "system-editor")]
     pub(crate) system_edit_requested: bool,
@@ -92,6 +98,8 @@ impl EditorState {
             redo: Stack::new(),
             clip: Clipboard::default(),
             preferred_col: None,
+            undo_transaction: false,
+            undo_transaction_captured: false,
             #[cfg(feature = "system-editor")]
             system_edit_requested: false,
         }

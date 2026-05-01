@@ -25,6 +25,11 @@ const CASES: &[Case] = &[
         initial: "one two three",
         keys: "wdw",
     },
+    Case {
+        name: "build_python_function_with_o_then_undo",
+        initial: "",
+        keys: "idef test_1234(x: int):<Esc>o    foobar<Esc>u",
+    },
 ];
 
 #[test]
@@ -33,7 +38,7 @@ fn edtui_matches_real_vim_for_golden_cases() {
     let vim = vim_binary();
 
     for case in CASES {
-        let edtui = run_edtui(case.initial, case.keys);
+        let edtui = run_edtui_steps(case.initial, &[case.keys]);
         let vim = run_vim(&vim, case.initial, case.keys);
         assert_eq!(
             edtui, vim,
@@ -97,7 +102,7 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
             steps.push(atom);
         }
 
-        let edtui = run_edtui(initial, &keys);
+        let edtui = run_edtui_steps(initial, &steps);
         let vim_snapshot = run_vim_steps(&vim, initial, &steps);
         if edtui != vim_snapshot {
             panic!(
@@ -137,11 +142,15 @@ struct Snapshot {
     cursor: (usize, usize),
 }
 
-fn run_edtui(initial: &str, keys: &str) -> Snapshot {
+fn run_edtui_steps(initial: &str, steps: &[&str]) -> Snapshot {
     let mut state = EditorState::new(Lines::from(initial));
     let mut handler = EditorEventHandler::vim_mode();
-    for key in parse_keys(keys) {
-        handler.on_key_event(key, &mut state);
+    for step in steps {
+        state.begin_undo_transaction();
+        for key in parse_keys(step) {
+            handler.on_key_event(key, &mut state);
+        }
+        state.end_undo_transaction();
     }
     snapshot(&state)
 }
@@ -151,9 +160,11 @@ fn trace_edtui(initial: &str, steps: &[&str]) -> Vec<Snapshot> {
     let mut handler = EditorEventHandler::vim_mode();
     let mut snapshots = Vec::new();
     for step in steps {
+        state.begin_undo_transaction();
         for key in parse_keys(step) {
             handler.on_key_event(key, &mut state);
         }
+        state.end_undo_transaction();
         snapshots.push(snapshot(&state));
     }
     snapshots
