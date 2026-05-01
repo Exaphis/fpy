@@ -84,6 +84,9 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         .iter_row()
         .map(|row| row.iter().collect::<String>())
         .collect();
+    if rows.is_empty() {
+        rows.push(String::new());
+    }
     if let Some(line) = rows.get_mut(row) {
         line.insert_str(col, &text);
         state.lines = Lines::from(rows.join("\n"));
