@@ -51,17 +51,21 @@ pub(crate) struct UndoState {
 
 impl EditorState {
     pub fn begin_undo_transaction(&mut self) {
-        self.undo_transaction = true;
-        self.undo_transaction_captured = false;
+        if self.undo_transaction_depth == 0 {
+            self.undo_transaction_captured = false;
+        }
+        self.undo_transaction_depth = self.undo_transaction_depth.saturating_add(1);
     }
 
     pub fn end_undo_transaction(&mut self) {
-        self.undo_transaction = false;
-        self.undo_transaction_captured = false;
+        self.undo_transaction_depth = self.undo_transaction_depth.saturating_sub(1);
+        if self.undo_transaction_depth == 0 {
+            self.undo_transaction_captured = false;
+        }
     }
 
     pub(crate) fn capture(&mut self) {
-        if self.undo_transaction && self.undo_transaction_captured {
+        if self.undo_transaction_depth > 0 && self.undo_transaction_captured {
             return;
         }
         let editor_state = UndoState {
@@ -70,7 +74,7 @@ impl EditorState {
         };
         self.undo.push(editor_state);
         self.redo = Stack::new();
-        if self.undo_transaction {
+        if self.undo_transaction_depth > 0 {
             self.undo_transaction_captured = true;
         }
     }

@@ -23,7 +23,9 @@ use crate::actions::{
     Undo,
 };
 use crate::events::KeyInput;
-use crate::vim::{command::VimCommandContext, state::VimCommandState};
+use crate::vim::{
+    command::VimCommandContext, executor::VimCommandExecutor, state::VimCommandState,
+};
 use crate::{EditorMode, EditorState};
 use crossterm::event::KeyCode;
 use std::collections::HashMap;
@@ -854,16 +856,16 @@ impl KeyEventHandler {
         }
 
         if mode == EditorMode::Normal
-            && self
-                .vim_command_context()
-                .handle_normal_key(key_input, state)
+            && VimCommandExecutor::execute_handled(state, |state| {
+                self.vim_command_context().handle_normal_key(key_input, state)
+            })
         {
             return;
         }
         if mode == EditorMode::Visual
-            && self
-                .vim_command_context()
-                .handle_visual_key(key_input, state)
+            && VimCommandExecutor::execute_handled(state, |state| {
+                self.vim_command_context().handle_visual_key(key_input, state)
+            })
         {
             return;
         }
@@ -874,7 +876,11 @@ impl KeyEventHandler {
             if count != 1 {
                 apply_count(&mut action, count, key_input, mode, state);
             }
-            action.execute(state);
+            if matches!(mode, EditorMode::Normal | EditorMode::Visual) {
+                VimCommandExecutor::execute_action(&mut action, state);
+            } else {
+                action.execute(state);
+            }
             self.vim.clear();
         } else if matches!(mode, EditorMode::Normal | EditorMode::Visual) {
             if self.lookup.is_empty() {

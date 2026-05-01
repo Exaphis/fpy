@@ -34,6 +34,7 @@ fn apply_operator_with_capture(
         Operator::Delete | Operator::Change => {
             if capture {
                 if range.kind == RangeKind::Linewise
+                    && range.start.row == range.end.row
                     && !(range.start.row == 0
                         && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
                 {
@@ -138,7 +139,12 @@ fn extract_linewise(state: &mut EditorState, start_row: usize, end_row: usize) -
         state.lines.push(Vec::<char>::new());
     }
     state.cursor.row = start_row.min(state.lines.len().saturating_sub(1));
-    state.cursor.col = 0;
+    state.cursor.col = state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+        .unwrap_or(0);
     Lines::from(text)
 }
 

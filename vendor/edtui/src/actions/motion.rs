@@ -431,7 +431,9 @@ fn move_big_word_forward_to_end_of_word(state: &mut EditorState) {
         (true, false) => Index2::new(state.cursor.row.saturating_add(1), 0),
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),
     };
-    if state.lines.len_col(start_index.row).unwrap_or_default() == 0 {
+    if state.lines.len_col(start_index.row).unwrap_or_default() == 0
+        && start_index.row + 1 >= state.lines.iter_row().count()
+    {
         state.cursor = start_index;
         return;
     }
