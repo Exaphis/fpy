@@ -205,10 +205,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         // Move cursor forward
         (
-            KeyEventRegister::n(vec![KeyInput::new('l')]),
-            MoveForward(1).into(),
-        ),
-        (
             KeyEventRegister::v(vec![KeyInput::new('l')]),
             MoveForward(1).into(),
         ),
@@ -225,10 +221,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             MoveForward(1).into(),
         ),
         // Move cursor backward
-        (
-            KeyEventRegister::n(vec![KeyInput::new('h')]),
-            MoveBackward(1).into(),
-        ),
         (
             KeyEventRegister::v(vec![KeyInput::new('h')]),
             MoveBackward(1).into(),
@@ -255,10 +247,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         // Move cursor up
         (
-            KeyEventRegister::n(vec![KeyInput::new('k')]),
-            MoveUp(1).into(),
-        ),
-        (
             KeyEventRegister::v(vec![KeyInput::new('k')]),
             MoveUp(1).into(),
         ),
@@ -275,10 +263,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             MoveUp(1).into(),
         ),
         // Move cursor down
-        (
-            KeyEventRegister::n(vec![KeyInput::new('j')]),
-            MoveDown(1).into(),
-        ),
         (
             KeyEventRegister::v(vec![KeyInput::new('j')]),
             MoveDown(1).into(),
@@ -297,66 +281,30 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         // Move one word forward/backward
         (
-            KeyEventRegister::n(vec![KeyInput::new('w')]),
-            MoveWordForward(1).into(),
-        ),
-        (
             KeyEventRegister::v(vec![KeyInput::new('w')]),
             MoveWordForward(1).into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::new('e')]),
-            MoveWordForwardToEndOfWord(1).into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::new('e')]),
             MoveWordForwardToEndOfWord(1).into(),
         ),
         (
-            KeyEventRegister::n(vec![KeyInput::new('b')]),
-            MoveWordBackward(1).into(),
-        ),
-        (
             KeyEventRegister::v(vec![KeyInput::new('b')]),
             MoveWordBackward(1).into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('W')]),
-            MoveBigWordForward(1).into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::shift('W')]),
             MoveBigWordForward(1).into(),
         ),
         (
-            KeyEventRegister::n(vec![KeyInput::shift('E')]),
-            MoveBigWordForwardToEndOfWord(1).into(),
-        ),
-        (
             KeyEventRegister::v(vec![KeyInput::shift('E')]),
             MoveBigWordForwardToEndOfWord(1).into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('B')]),
-            MoveBigWordBackward(1).into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::shift('B')]),
             MoveBigWordBackward(1).into(),
         ),
         // Move cursor to start/first/last position
-        (
-            KeyEventRegister::n(vec![KeyInput::new('0')]),
-            MoveToStartOfLine().into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::new('_')]),
-            MoveToFirst().into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::new('$')]),
-            MoveToEndOfLine().into(),
-        ),
         (
             KeyEventRegister::v(vec![KeyInput::new('0')]),
             MoveToStartOfLine().into(),
@@ -454,16 +402,8 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         // Move cursor to start/last row in the buffer
         (
-            KeyEventRegister::n(vec![KeyInput::new('g'), KeyInput::new('g')]),
-            MoveToFirstRow().into(),
-        ),
-        (
             KeyEventRegister::v(vec![KeyInput::new('g'), KeyInput::new('g')]),
             MoveToFirstRow().into(),
-        ),
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('G')]),
-            MoveToLastRow().into(),
         ),
         (
             KeyEventRegister::v(vec![KeyInput::shift('G')]),
@@ -498,10 +438,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         // Remove the current character
         (
-            KeyEventRegister::n(vec![KeyInput::new('x')]),
-            RemoveChar(1).into(),
-        ),
-        (
             KeyEventRegister::n(vec![KeyInput::new(KeyCode::Delete)]),
             RemoveChar(1).into(),
         ),
@@ -516,10 +452,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
             DeleteCharForward(1).into(),
         ),
         // Delete/change from the cursor to the end of the line
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('D')]),
-            DeleteToEndOfLine.into(),
-        ),
         (
             KeyEventRegister::n(vec![KeyInput::shift('C')]),
             ChangeToEndOfLine.into(),
