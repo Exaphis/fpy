@@ -36,6 +36,7 @@ pub struct KeyEventHandler {
     vim: VimCommandState,
     register: HashMap<KeyEventRegister, Action>,
     capture_on_insert: bool,
+    vim_insert_session_active: bool,
 }
 
 impl Default for KeyEventHandler {
@@ -53,6 +54,7 @@ impl KeyEventHandler {
             vim: VimCommandState::default(),
             register,
             capture_on_insert,
+            vim_insert_session_active: false,
         }
     }
 
@@ -65,6 +67,7 @@ impl KeyEventHandler {
             vim: VimCommandState::default(),
             register,
             capture_on_insert: false,
+            vim_insert_session_active: false,
         }
     }
 
@@ -77,6 +80,7 @@ impl KeyEventHandler {
             vim: VimCommandState::default(),
             register,
             capture_on_insert: true,
+            vim_insert_session_active: false,
         }
     }
 
@@ -877,9 +881,19 @@ impl KeyEventHandler {
                 apply_count(&mut action, count, key_input, mode, state);
             }
             if matches!(mode, EditorMode::Normal | EditorMode::Visual) {
-                VimCommandExecutor::execute_action(&mut action, state);
+                let entering_insert = VimCommandExecutor::execute_normal_action(&mut action, state);
+                if entering_insert {
+                    self.vim_insert_session_active = true;
+                }
             } else {
                 action.execute(state);
+                if mode == EditorMode::Insert
+                    && state.mode != EditorMode::Insert
+                    && self.vim_insert_session_active
+                {
+                    VimCommandExecutor::end_insert_session(state);
+                    self.vim_insert_session_active = false;
+                }
             }
             self.vim.clear();
         } else if matches!(mode, EditorMode::Normal | EditorMode::Visual) {

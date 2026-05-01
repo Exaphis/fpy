@@ -1,4 +1,7 @@
-use crate::{actions::{Action, Execute}, EditorState};
+use crate::{
+    actions::{Action, Execute},
+    EditorMode, EditorState,
+};
 
 use super::transaction;
 
@@ -10,11 +13,26 @@ use super::transaction;
 pub(crate) struct VimCommandExecutor;
 
 impl VimCommandExecutor {
-    pub(crate) fn execute_action(action: &mut Action, state: &mut EditorState) {
+    pub(crate) fn execute_normal_action(action: &mut Action, state: &mut EditorState) -> bool {
+        let mode_before = state.mode;
+        state.begin_undo_transaction();
         transaction::in_undo_transaction(state, |state| action.execute(state));
+        let entering_insert = matches!(mode_before, EditorMode::Normal | EditorMode::Visual)
+            && state.mode == EditorMode::Insert;
+        if !entering_insert {
+            state.end_undo_transaction();
+        }
+        entering_insert
     }
 
-    pub(crate) fn execute_handled(state: &mut EditorState, f: impl FnOnce(&mut EditorState) -> bool) -> bool {
+    pub(crate) fn end_insert_session(state: &mut EditorState) {
+        state.end_undo_transaction();
+    }
+
+    pub(crate) fn execute_handled(
+        state: &mut EditorState,
+        f: impl FnOnce(&mut EditorState) -> bool,
+    ) -> bool {
         transaction::in_undo_transaction(state, f)
     }
 }

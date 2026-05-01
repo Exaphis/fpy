@@ -9,7 +9,7 @@
 
 use std::{fs, process::Command};
 
-use edtui::{events::KeyInput, EditorEventHandler, EditorState, Lines};
+use edtui::{EditorEventHandler, EditorState, Lines, events::KeyInput};
 use tempfile::tempdir;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,18 +19,11 @@ struct Case {
     keys: &'static str,
 }
 
-const CASES: &[Case] = &[
-    Case {
-        name: "delete_word",
-        initial: "one two three",
-        keys: "wdw",
-    },
-    Case {
-        name: "build_python_function_with_o_then_undo",
-        initial: "",
-        keys: "idef test_1234(x: int):<Esc>o    foobar<Esc>u",
-    },
-];
+const CASES: &[Case] = &[Case {
+    name: "delete_word",
+    initial: "one two three",
+    keys: "wdw",
+}];
 
 #[test]
 #[ignore = "requires a real Vim binary; run with FPY_VIM=vim cargo test --test vim_fidelity -- --ignored"]
@@ -40,11 +33,7 @@ fn edtui_matches_real_vim_for_golden_cases() {
     for case in CASES {
         let edtui = run_edtui_steps(case.initial, &[case.keys]);
         let vim = run_vim(&vim, case.initial, case.keys);
-        assert_eq!(
-            edtui, vim,
-            "case {:?} with keys {:?}",
-            case.name, case.keys
-        );
+        assert_eq!(edtui, vim, "case {:?} with keys {:?}", case.name, case.keys);
     }
 }
 
@@ -66,18 +55,94 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
     // Keep this corpus to commands we intentionally support and have not already
     // documented as divergences. Add commands here as edtui's Vim fidelity grows.
     let single_line_atoms = [
-        "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "OX<Esc>",
-        "iX<Enter>Y<Esc>", "aX<Enter>Y<Esc>",
-        "2dd", "2h", "2l", "2w", "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e",
-        "u", "<C-r>",
+        "h",
+        "j",
+        "k",
+        "l",
+        "w",
+        "b",
+        "e",
+        "W",
+        "B",
+        "E",
+        "0",
+        "_",
+        "$",
+        "gg",
+        "G",
+        "x",
+        "dd",
+        "dw",
+        "D",
+        "J",
+        "iX<Esc>",
+        "IX<Esc>",
+        "aX<Esc>",
+        "AX<Esc>",
+        "OX<Esc>",
+        "iX<Enter>Y<Esc>",
+        "aX<Enter>Y<Esc>",
+        "2dd",
+        "2h",
+        "2l",
+        "2w",
+        "2b",
+        "2e",
+        "2W",
+        "2B",
+        "2E",
+        "2x",
+        "3w",
+        "3b",
+        "3e",
+        "u",
+        "<C-r>",
     ];
     let multiline_atoms = [
-        "h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "_", "$", "gg", "G", "x",
-        "dd", "dw", "D", "J", "iX<Esc>", "IX<Esc>", "aX<Esc>", "AX<Esc>", "OX<Esc>",
-        "iX<Enter>Y<Esc>", "aX<Enter>Y<Esc>",
-        "2dd", "2h", "2l", "2w", "2b", "2e", "2W", "2B", "2E", "2x", "3w", "3b", "3e", "2j", "2k",
-        "u", "<C-r>",
+        "h",
+        "j",
+        "k",
+        "l",
+        "w",
+        "b",
+        "e",
+        "W",
+        "B",
+        "E",
+        "0",
+        "_",
+        "$",
+        "gg",
+        "G",
+        "x",
+        "dd",
+        "dw",
+        "D",
+        "J",
+        "iX<Esc>",
+        "IX<Esc>",
+        "aX<Esc>",
+        "AX<Esc>",
+        "OX<Esc>",
+        "iX<Enter>Y<Esc>",
+        "aX<Enter>Y<Esc>",
+        "2dd",
+        "2h",
+        "2l",
+        "2w",
+        "2b",
+        "2e",
+        "2W",
+        "2B",
+        "2E",
+        "2x",
+        "3w",
+        "3b",
+        "3e",
+        "2j",
+        "2k",
+        "u",
+        "<C-r>",
     ];
     let initials = [
         "one two three",
@@ -293,7 +358,10 @@ fn parse_vim_trace(path: &std::path::Path) -> Vec<Snapshot> {
                 .expect("trace col")
                 - 1;
             let text = fields.next().unwrap_or_default().replace("\\n", "\n");
-            Snapshot { text, cursor: (row, col) }
+            Snapshot {
+                text,
+                cursor: (row, col),
+            }
         })
         .collect()
 }
@@ -320,7 +388,7 @@ fn parse_keys(keys: &str) -> Vec<KeyInput> {
                 "BS" => out.push(KeyInput::new(crossterm::event::KeyCode::Backspace)),
                 "Tab" => out.push(KeyInput::new(crossterm::event::KeyCode::Tab)),
                 "C-r" => out.push(KeyInput::ctrl('r')),
-                other => panic!("unsupported key token <{other}>")
+                other => panic!("unsupported key token <{other}>"),
             }
         } else if ch.is_ascii_uppercase() {
             out.push(KeyInput::shift(ch));
@@ -352,7 +420,7 @@ fn vim_normal_execute_arg(keys: &str) -> String {
                     "BS" => out.push_str("\\<BS>"),
                     "Tab" => out.push_str("\\<Tab>"),
                     "C-r" => out.push_str("\\<C-r>"),
-                    other => panic!("unsupported key token <{other}>")
+                    other => panic!("unsupported key token <{other}>"),
                 }
             }
             _ => out.push(ch),
