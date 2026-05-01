@@ -549,6 +549,14 @@ impl Execute for MoveToFirst {
         state.preferred_col = None;
         state.cursor.col = 0;
         skip_whitespace(&state.lines, &mut state.cursor);
+        if state
+            .lines
+            .iter_row()
+            .nth(state.cursor.row)
+            .is_some_and(|row| row.iter().all(|ch| ch.is_ascii_whitespace()))
+        {
+            state.cursor.col = state.lines.len_col(state.cursor.row).unwrap_or_default();
+        }
 
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);

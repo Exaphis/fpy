@@ -132,7 +132,7 @@ fn apply_linewise_edit(
 }
 
 fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
-    if should_restore_single_line_delete_to_column_zero(state, range) {
+    if should_restore_linewise_delete_to_column_zero(state, range) {
         let cursor = state.cursor;
         state.cursor.col = 0;
         state.capture();
@@ -142,9 +142,9 @@ fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
     }
 }
 
-fn should_restore_single_line_delete_to_column_zero(state: &EditorState, range: TextRange) -> bool {
+fn should_restore_linewise_delete_to_column_zero(state: &EditorState, range: TextRange) -> bool {
     range.start.row == range.end.row
-        && !(range.start.row == 0
+        || (range.start.row == 0
             && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
 }
 
