@@ -7,6 +7,45 @@ use jagged::Index2;
 
 use super::range::TextRange;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MotionKind {
+    WordForward,
+    WordEnd,
+    WordBackward,
+    BigWordForward,
+    BigWordEnd,
+    BigWordBackward,
+}
+
+pub(crate) fn motion_destination(
+    state: &EditorState,
+    motion: MotionKind,
+    count: usize,
+) -> Option<Index2> {
+    let mut scratch = state.clone();
+    for _ in 0..count.max(1) {
+        apply_motion_once(&mut scratch, motion)?;
+    }
+    Some(scratch.cursor)
+}
+
+fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
+    use crate::actions::{
+        Execute, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord,
+        MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+    };
+
+    match motion {
+        MotionKind::WordForward => MoveWordForward(1).execute(state),
+        MotionKind::WordEnd => MoveWordForwardToEndOfWord(1).execute(state),
+        MotionKind::WordBackward => MoveWordBackward(1).execute(state),
+        MotionKind::BigWordForward => MoveBigWordForward(1).execute(state),
+        MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
+        MotionKind::BigWordBackward => MoveBigWordBackward(1).execute(state),
+    }
+    Some(())
+}
+
 pub(crate) fn word_forward_range(state: &EditorState) -> Option<TextRange> {
     let start = state.cursor;
     if state.lines.len_col(start.row).unwrap_or_default() == 0

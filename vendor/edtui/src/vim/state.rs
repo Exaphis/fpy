@@ -28,6 +28,10 @@ impl VimCommandState {
         }
     }
 
+    pub(crate) fn command_count(&self) -> usize {
+        self.pending_count.parse::<usize>().unwrap_or(1).max(1)
+    }
+
     pub(crate) fn take_command_count(&mut self) -> usize {
         let motion_count = self.take_count().unwrap_or(1);
         let operator_count = self.operator_count.take().unwrap_or(1);

@@ -5,8 +5,9 @@ use crate::{
 };
 
 use super::{
-    motion as vim_motion, operator as vim_operator, operator::Operator, range::TextRange,
-    state::VimCommandState, text_object as vim_text_object, visual as vim_visual,
+    motion::{self as vim_motion, MotionKind},
+    operator as vim_operator, operator::Operator, range::TextRange, state::VimCommandState,
+    text_object as vim_text_object, visual as vim_visual,
 };
 
 pub(crate) struct VimCommandContext<'a> {
@@ -50,6 +51,7 @@ impl VimCommandContext<'_> {
         editor: &mut EditorState,
     ) -> bool {
         self.handle_visual_line_key(key_input, editor)
+            || self.handle_standalone_word_motion_key(key_input, editor)
             || self.handle_delete_atom_key(key_input, editor)
             || self.handle_substitute_key(key_input, editor)
             || self.handle_char_motion_key(key_input, editor)
@@ -87,6 +89,36 @@ impl VimCommandContext<'_> {
 
     pub(crate) fn take_command_count(&mut self) -> usize {
         self.state.take_command_count()
+    }
+
+    fn handle_standalone_word_motion_key(
+        &mut self,
+        key_input: KeyInput,
+        editor: &mut EditorState,
+    ) -> bool {
+        use input::KeyCode::Char;
+        if !self.lookup.is_empty() {
+            return false;
+        }
+        let motion = match (key_input.key, key_input.modifiers) {
+            (Char('w'), input::Modifiers::NONE) => MotionKind::WordForward,
+            (Char('e'), input::Modifiers::NONE) => MotionKind::WordEnd,
+            (Char('b'), input::Modifiers::NONE) => MotionKind::WordBackward,
+            (Char('W'), input::Modifiers::SHIFT) => MotionKind::BigWordForward,
+            (Char('E'), input::Modifiers::SHIFT) => MotionKind::BigWordEnd,
+            (Char('B'), input::Modifiers::SHIFT) => MotionKind::BigWordBackward,
+            _ => return false,
+        };
+        if let Some(destination) =
+            vim_motion::motion_destination(editor, motion, self.state.command_count())
+        {
+            editor.cursor = destination;
+            editor.preferred_col = None;
+            editor.clamp_column();
+        }
+        self.lookup.clear();
+        self.state.clear();
+        true
     }
 
     fn handle_delete_atom_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
