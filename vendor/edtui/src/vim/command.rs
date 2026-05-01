@@ -189,6 +189,9 @@ impl VimCommandContext<'_> {
             (Char('J'), input::Modifiers::SHIFT) => {
                 vim_operator::join_line_with_line_below(editor);
             }
+            (Char('p'), input::Modifiers::NONE) => {
+                vim_operator::paste_after(editor);
+            }
             _ => return false,
         }
         self.lookup.clear();

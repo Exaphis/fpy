@@ -110,6 +110,31 @@ const CASES: &[Case] = &[
         initial: "abc def",
         keys: "wCX<Esc>",
     },
+    Case {
+        name: "paste_after_char_delete",
+        initial: "abc",
+        keys: "xp",
+    },
+    Case {
+        name: "paste_after_line_delete",
+        initial: "abc\ndef",
+        keys: "ddp",
+    },
+    Case {
+        name: "paste_after_word_delete",
+        initial: "abc def",
+        keys: "dwp",
+    },
+    Case {
+        name: "paste_undo_after_char_delete",
+        initial: "abc",
+        keys: "xpu",
+    },
+    Case {
+        name: "paste_undo_after_line_delete",
+        initial: "abc\ndef",
+        keys: "ddpu",
+    },
 ];
 
 #[test]

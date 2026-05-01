@@ -453,7 +453,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         ),
         // Copy
         // Paste
-        (KeyEventRegister::n(vec![KeyInput::new('p')]), Paste.into()),
         (
             KeyEventRegister::v(vec![KeyInput::new('p')]),
             PasteOverSelection

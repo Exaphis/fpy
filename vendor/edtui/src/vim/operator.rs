@@ -51,6 +51,45 @@ pub(crate) fn change_to_end_of_line(state: &mut EditorState) {
     apply_operator(state, Operator::Change, range);
 }
 
+pub(crate) fn paste_after(state: &mut EditorState) {
+    let text = state.clip.get_text();
+    if text.is_empty() {
+        return;
+    }
+    state.preferred_col = None;
+    state.capture();
+    if state.vim_last_yank_linewise {
+        let mut rows: Vec<String> = state
+            .lines
+            .iter_row()
+            .map(|row| row.iter().collect::<String>())
+            .collect();
+        let insert_at = (state.cursor.row + 1).min(rows.len());
+        let pasted_text = text.trim_start_matches('\n').trim_end_matches('\n');
+        let pasted_rows = pasted_text.split('\n').map(str::to_string);
+        rows.splice(insert_at..insert_at, pasted_rows);
+        state.lines = Lines::from(rows.join("\n"));
+        state.cursor.row = insert_at.min(state.lines.iter_row().count().saturating_sub(1));
+        state.cursor.col = 0;
+        return;
+    }
+
+    let row = state.cursor.row;
+    let col = (state.cursor.col + 1).min(state.lines.len_col(row).unwrap_or_default());
+    let mut rows: Vec<String> = state
+        .lines
+        .iter_row()
+        .map(|row| row.iter().collect::<String>())
+        .collect();
+    if let Some(line) = rows.get_mut(row) {
+        line.insert_str(col, &text);
+        state.lines = Lines::from(rows.join("\n"));
+        state.cursor.row = row;
+        state.cursor.col = col + text.chars().count().saturating_sub(1);
+        clamp_cursor(state);
+    }
+}
+
 pub(crate) fn join_line_with_line_below(state: &mut EditorState) {
     let mut rows: Vec<String> = state
         .lines
@@ -108,7 +147,7 @@ fn apply_operator_with_capture(
                 state.capture();
             }
             let yanked = extract_range(state, range);
-            state.clip.set_text(yanked.to_string());
+            state.clip.set_text(lines_to_text(&yanked));
             state.vim_last_yank_linewise = false;
             if operator == Operator::Change {
                 state.cursor = Index2::new(
@@ -140,11 +179,16 @@ fn apply_linewise_edit(
     range: TextRange,
     capture: bool,
 ) {
+    if state.lines.iter_row().count() == 1
+        && state.lines.len_col(0).unwrap_or_default() == 0
+    {
+        return;
+    }
     if capture {
         capture_linewise_undo_state(state, range);
     }
     let yanked = extract_linewise(state, range.start.row, range.end.row);
-    state.clip.set_text(yanked.to_string());
+    state.clip.set_text(lines_to_text(&yanked));
     state.vim_last_yank_linewise = true;
     place_cursor_after_linewise_edit(state, range.start.row);
     if operator == Operator::Change {
@@ -223,6 +267,14 @@ fn extract_range(state: &mut EditorState, range: TextRange) -> Lines {
             text
         }
     }
+}
+
+fn lines_to_text(lines: &Lines) -> String {
+    lines
+        .iter_row()
+        .map(|row| row.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn copy_linewise(lines: &Lines, start_row: usize, end_row: usize) -> String {
