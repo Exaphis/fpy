@@ -145,6 +145,9 @@ impl VimCommandContext<'_> {
         if let Some(destination) =
             vim_motion::motion_destination(editor, motion, self.state.command_count())
         {
+            if motion == MotionKind::FirstNonWhitespace {
+                editor.discard_redundant_undo_top();
+            }
             editor.cursor = destination;
             editor.preferred_col = None;
             editor.clamp_column();

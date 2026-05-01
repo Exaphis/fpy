@@ -546,7 +546,6 @@ pub struct MoveToFirst();
 
 impl Execute for MoveToFirst {
     fn execute(&mut self, state: &mut EditorState) {
-        state.discard_redundant_undo_top();
         state.preferred_col = None;
         state.cursor.col = 0;
         skip_whitespace(&state.lines, &mut state.cursor);
