@@ -41,6 +41,47 @@ pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
     apply_operator(state, Operator::Delete, range);
 }
 
+pub(crate) fn join_line_with_line_below(state: &mut EditorState) {
+    let mut rows: Vec<String> = state
+        .lines
+        .iter_row()
+        .map(|row| row.iter().collect::<String>())
+        .collect();
+    if state.cursor.row + 1 >= rows.len() {
+        return;
+    }
+
+    state.preferred_col = None;
+    state.capture();
+
+    let row = state.cursor.row;
+    let left_had_trailing_whitespace = rows[row]
+        .chars()
+        .last()
+        .is_some_and(|ch| ch.is_ascii_whitespace());
+    let left = rows[row].trim_end().to_string();
+    let right = rows.remove(row + 1).trim_start().to_string();
+    let join_col = left.chars().count();
+    let joined_with_space = !left.is_empty() && !right.is_empty();
+    rows[row] = if joined_with_space {
+        format!("{left} {right}")
+    } else {
+        format!("{left}{right}")
+    };
+    state.lines = Lines::default();
+    for row in rows {
+        state.lines.push(row.chars().collect::<Vec<_>>());
+    }
+    let cursor_col = join_col + usize::from(joined_with_space && left_had_trailing_whitespace);
+    state.cursor.col = cursor_col.min(
+        state
+            .lines
+            .len_col(row)
+            .unwrap_or_default()
+            .saturating_sub(1),
+    );
+}
+
 fn apply_operator_with_capture(
     state: &mut EditorState,
     operator: Operator,

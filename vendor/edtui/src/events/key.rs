@@ -14,8 +14,8 @@ use crate::actions::search::{StartBackwardSearch, StartSearch};
 use crate::actions::OpenSystemEditor;
 use crate::actions::{
     Action, AppendCharToSearch, AppendNewline, Chainable, ChangeToEndOfLine, DeleteChar, Execute,
-    FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, JoinLineWithLineBelow, LineBreak,
-    MoveBackward, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
+    FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, LineBreak, MoveBackward,
+    MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
     MoveForward, MoveForwardForInsert, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst,
     MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward,
     MoveWordForwardToEndOfWord,
@@ -455,11 +455,6 @@ fn vim_keybindings() -> HashMap<KeyEventRegister, Action> {
         (
             KeyEventRegister::n(vec![KeyInput::shift('C')]),
             ChangeToEndOfLine.into(),
-        ),
-        // Join the current line with the line below
-        (
-            KeyEventRegister::n(vec![KeyInput::shift('J')]),
-            JoinLineWithLineBelow.into(),
         ),
         // Undo
         (KeyEventRegister::n(vec![KeyInput::new('u')]), Undo.into()),
