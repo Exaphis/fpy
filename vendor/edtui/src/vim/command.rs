@@ -38,6 +38,7 @@ impl VimCommandContext<'_> {
                 self.state.clear();
                 if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
                     move_to_row(editor, target_row);
+                    editor.preferred_col = None;
                 }
                 true
             }
@@ -107,6 +108,12 @@ impl VimCommandContext<'_> {
             (Char('W'), input::Modifiers::SHIFT) => MotionKind::BigWordForward,
             (Char('E'), input::Modifiers::SHIFT) => MotionKind::BigWordEnd,
             (Char('B'), input::Modifiers::SHIFT) => MotionKind::BigWordBackward,
+            (Char('0'), input::Modifiers::NONE) => MotionKind::LineStart,
+            (Char('_'), input::Modifiers::NONE) => MotionKind::FirstNonWhitespace,
+            (Char('$'), input::Modifiers::NONE) => MotionKind::LineEnd,
+            (Char('k'), input::Modifiers::NONE) => MotionKind::Up,
+            (Char('j'), input::Modifiers::NONE) => MotionKind::Down,
+            (Char('G'), input::Modifiers::SHIFT) => MotionKind::LastRow,
             _ => return false,
         };
         if let Some(destination) =

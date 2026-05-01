@@ -15,6 +15,13 @@ pub(crate) enum MotionKind {
     BigWordForward,
     BigWordEnd,
     BigWordBackward,
+    LineStart,
+    FirstNonWhitespace,
+    LineEnd,
+    Up,
+    Down,
+    FirstRow,
+    LastRow,
 }
 
 pub(crate) fn motion_destination(
@@ -31,8 +38,8 @@ pub(crate) fn motion_destination(
 
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
     use crate::actions::{
-        Execute, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord,
-        MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+        Execute, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
+        MoveUp, MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
     };
 
     match motion {
@@ -42,6 +49,34 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         MotionKind::BigWordForward => MoveBigWordForward(1).execute(state),
         MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
         MotionKind::BigWordBackward => MoveBigWordBackward(1).execute(state),
+        MotionKind::LineStart => {
+            state.preferred_col = None;
+            state.cursor.col = 0;
+        }
+        MotionKind::FirstNonWhitespace => {
+            state.preferred_col = None;
+            state.cursor.col = 0;
+            skip_whitespace(&state.lines, &mut state.cursor);
+        }
+        MotionKind::LineEnd => {
+            use crate::helper::max_col;
+            state.preferred_col = Some(usize::MAX);
+            state.cursor.col = max_col(&state.lines, &state.cursor, state.mode);
+        }
+        MotionKind::Up => MoveUp(1).execute(state),
+        MotionKind::Down => MoveDown(1).execute(state),
+        MotionKind::FirstRow => {
+            state.preferred_col = None;
+            state.cursor.row = 0;
+            state.cursor.col = 0;
+            skip_whitespace(&state.lines, &mut state.cursor);
+        }
+        MotionKind::LastRow => {
+            state.preferred_col = None;
+            state.cursor.row = state.lines.len().saturating_sub(1);
+            state.cursor.col = 0;
+            skip_whitespace(&state.lines, &mut state.cursor);
+        }
     }
     Some(())
 }
