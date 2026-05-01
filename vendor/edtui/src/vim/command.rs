@@ -142,14 +142,18 @@ impl VimCommandContext<'_> {
             (Char('l'), input::Modifiers::NONE) => MotionKind::Right,
             _ => return false,
         };
-        if let Some(destination) =
-            vim_motion::motion_destination(editor, motion, self.state.command_count())
+        if let Some((destination, preferred_col)) =
+            vim_motion::motion_effect(editor, motion, self.state.command_count())
         {
             if motion == MotionKind::FirstNonWhitespace {
                 editor.discard_redundant_undo_top();
             }
             editor.cursor = destination;
-            editor.preferred_col = None;
+            editor.preferred_col = if matches!(motion, MotionKind::LineEnd | MotionKind::Up | MotionKind::Down) {
+                preferred_col
+            } else {
+                None
+            };
             editor.clamp_column();
         }
         self.lookup.clear();

@@ -55,6 +55,36 @@ const CASES: &[Case] = &[
         initial: "abc def",
         keys: "wD",
     },
+    Case {
+        name: "find_char_forward",
+        initial: "abc abc",
+        keys: "fa",
+    },
+    Case {
+        name: "till_char_forward",
+        initial: "abc abc",
+        keys: "ta",
+    },
+    Case {
+        name: "find_char_backward",
+        initial: "abc abc",
+        keys: "$Fa",
+    },
+    Case {
+        name: "till_char_backward",
+        initial: "abc abc",
+        keys: "$Ta",
+    },
+    Case {
+        name: "big_word_forward_counts_empty_line",
+        initial: "X\n\nYone two three",
+        keys: "2W",
+    },
+    Case {
+        name: "line_end_sets_vertical_preferred_column",
+        initial: "abc def\nXxyz",
+        keys: "j$2k",
+    },
 ];
 
 #[test]

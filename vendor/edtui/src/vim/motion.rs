@@ -96,11 +96,19 @@ pub(crate) fn motion_destination(
     motion: MotionKind,
     count: usize,
 ) -> Option<Index2> {
+    motion_effect(state, motion, count).map(|(cursor, _)| cursor)
+}
+
+pub(crate) fn motion_effect(
+    state: &EditorState,
+    motion: MotionKind,
+    count: usize,
+) -> Option<(Index2, Option<usize>)> {
     let mut scratch = state.clone();
     for _ in 0..count.max(1) {
         apply_motion_once(&mut scratch, motion)?;
     }
-    Some(scratch.cursor)
+    Some((scratch.cursor, scratch.preferred_col))
 }
 
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
@@ -113,6 +121,11 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         MotionKind::WordForward => MoveWordForward(1).execute(state),
         MotionKind::WordEnd => MoveWordForwardToEndOfWord(1).execute(state),
         MotionKind::WordBackward => MoveWordBackward(1).execute(state),
+        MotionKind::BigWordForward if next_row_is_empty(state) => {
+            state.preferred_col = None;
+            state.cursor.row += 1;
+            state.cursor.col = 0;
+        }
         MotionKind::BigWordForward => MoveBigWordForward(1).execute(state),
         MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
         MotionKind::BigWordBackward => MoveBigWordBackward(1).execute(state),
@@ -154,6 +167,16 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         }
     }
     Some(())
+}
+
+fn next_row_is_empty(state: &EditorState) -> bool {
+    state.lines.is_last_col(state.cursor)
+        && state.cursor.row + 1 < state.lines.iter_row().count()
+        && state
+            .lines
+            .len_col(state.cursor.row + 1)
+            .unwrap_or_default()
+            == 0
 }
 
 pub(crate) fn word_forward_range(state: &EditorState) -> Option<TextRange> {
