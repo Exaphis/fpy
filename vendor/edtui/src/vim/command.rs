@@ -6,7 +6,7 @@ use crate::{
 };
 
 use super::{
-    motion::{self as vim_motion, MotionKind},
+    motion::{self as vim_motion, CharMotionKind, MotionKind},
     operator as vim_operator, operator::Operator, range::TextRange, state::VimCommandState,
     text_object as vim_text_object, visual as vim_visual,
 };
@@ -213,12 +213,14 @@ impl VimCommandContext<'_> {
         };
 
         let count = self.take_command_count();
-        if let Some(range) = char_motion_range(motion, target, count, editor) {
-            editor.cursor = if matches!(motion, 'F' | 'T') {
-                range.start
-            } else {
-                range.end
-            };
+        if let Some(motion_kind) = char_motion_kind(motion) {
+            if let Some(range) = vim_motion::char_motion_range(editor, motion_kind, target, count) {
+                editor.cursor = if matches!(motion, 'F' | 'T') {
+                    range.start
+                } else {
+                    range.end
+                };
+            }
         }
         self.lookup.clear();
         self.state.clear();
@@ -304,10 +306,15 @@ impl VimCommandContext<'_> {
             };
             if matches!(prefix, 'f' | 't' | 'F' | 'T') {
                 if let Char(target) = key_input.key {
-                    if let Some(range) =
-                        char_motion_range(prefix, target, self.take_command_count(), editor)
-                    {
-                        apply_operator(op, editor, range);
+                    if let Some(motion) = char_motion_kind(prefix) {
+                        if let Some(range) = vim_motion::char_motion_range(
+                            editor,
+                            motion,
+                            target,
+                            self.take_command_count(),
+                        ) {
+                            apply_operator(op, editor, range);
+                        }
                     }
                     self.lookup.clear();
                     self.state.clear();
@@ -339,17 +346,12 @@ impl VimCommandContext<'_> {
     }
 }
 
-fn char_motion_range(
-    motion: char,
-    target: char,
-    count: usize,
-    editor: &EditorState,
-) -> Option<TextRange> {
+fn char_motion_kind(motion: char) -> Option<CharMotionKind> {
     match motion {
-        'f' => vim_motion::char_forward_range(editor, target, count, false),
-        't' => vim_motion::char_forward_range(editor, target, count, true),
-        'F' => vim_motion::char_backward_range(editor, target, count, false),
-        'T' => vim_motion::char_backward_range(editor, target, count, true),
+        'f' => Some(CharMotionKind::FindForward),
+        't' => Some(CharMotionKind::TillForward),
+        'F' => Some(CharMotionKind::FindBackward),
+        'T' => Some(CharMotionKind::TillBackward),
         _ => None,
     }
 }

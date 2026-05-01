@@ -26,6 +26,28 @@ pub(crate) enum MotionKind {
     Right,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CharMotionKind {
+    FindForward,
+    TillForward,
+    FindBackward,
+    TillBackward,
+}
+
+pub(crate) fn char_motion_range(
+    state: &EditorState,
+    motion: CharMotionKind,
+    target: char,
+    count: usize,
+) -> Option<TextRange> {
+    match motion {
+        CharMotionKind::FindForward => char_forward_range(state, target, count, false),
+        CharMotionKind::TillForward => char_forward_range(state, target, count, true),
+        CharMotionKind::FindBackward => char_backward_range(state, target, count, false),
+        CharMotionKind::TillBackward => char_backward_range(state, target, count, true),
+    }
+}
+
 pub(crate) fn operator_range(
     state: &EditorState,
     motion: MotionKind,
