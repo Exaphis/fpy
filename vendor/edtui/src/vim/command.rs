@@ -396,20 +396,21 @@ fn execute_operator_motion(
         return true;
     }
 
-    let range = match (key_input.key, plain, shifted) {
-        (Char('w'), true, _) => counted_range(count, editor, vim_motion::word_forward_range),
-        (Char('e'), true, _) => counted_range(count, editor, vim_motion::word_end_range),
-        (Char('b'), true, _) => counted_range(count, editor, vim_motion::word_backward_range),
-        (Char('W'), _, true) => counted_range(count, editor, vim_motion::big_word_forward_range),
-        (Char('E'), _, true) => counted_range(count, editor, vim_motion::big_word_end_range),
-        (Char('B'), _, true) => counted_range(count, editor, vim_motion::big_word_backward_range),
-        (Char('0'), true, _) => vim_motion::line_start_range(editor),
-        (Char('$'), _, _) => vim_motion::line_end_range(editor),
-        (Char('j'), true, _) => vim_motion::line_down_range(editor, count),
-        (Char('k'), true, _) => vim_motion::line_up_range(editor, count),
-        (Char('G'), _, true) => vim_motion::to_last_line_range(editor),
+    let motion = match (key_input.key, plain, shifted) {
+        (Char('w'), true, _) => Some(MotionKind::WordForward),
+        (Char('e'), true, _) => Some(MotionKind::WordEnd),
+        (Char('b'), true, _) => Some(MotionKind::WordBackward),
+        (Char('W'), _, true) => Some(MotionKind::BigWordForward),
+        (Char('E'), _, true) => Some(MotionKind::BigWordEnd),
+        (Char('B'), _, true) => Some(MotionKind::BigWordBackward),
+        (Char('0'), true, _) => Some(MotionKind::LineStart),
+        (Char('$'), _, _) => Some(MotionKind::LineEnd),
+        (Char('j'), true, _) => Some(MotionKind::Down),
+        (Char('k'), true, _) => Some(MotionKind::Up),
+        (Char('G'), _, true) => Some(MotionKind::LastRow),
         _ => None,
     };
+    let range = motion.and_then(|motion| vim_motion::operator_range(editor, motion, count));
 
     if let Some(range) = range {
         apply_operator(op, editor, range);
@@ -417,27 +418,6 @@ fn execute_operator_motion(
     } else {
         false
     }
-}
-
-fn counted_range(
-    count: usize,
-    editor: &EditorState,
-    motion: fn(&EditorState) -> Option<TextRange>,
-) -> Option<TextRange> {
-    let mut scratch = editor.clone();
-    let mut combined: Option<TextRange> = None;
-    for _ in 0..count {
-        let range = motion(&scratch)?;
-        scratch.cursor = range.end;
-        combined = Some(match combined {
-            Some(mut combined_range) => {
-                combined_range.end = range.end;
-                combined_range
-            }
-            None => range,
-        });
-    }
-    combined
 }
 
 fn apply_operator(op: char, editor: &mut EditorState, range: TextRange) {

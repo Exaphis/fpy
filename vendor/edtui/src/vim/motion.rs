@@ -26,6 +26,49 @@ pub(crate) enum MotionKind {
     Right,
 }
 
+pub(crate) fn operator_range(
+    state: &EditorState,
+    motion: MotionKind,
+    count: usize,
+) -> Option<TextRange> {
+    match motion {
+        MotionKind::WordForward => counted_range(count, state, word_forward_range),
+        MotionKind::WordEnd => counted_range(count, state, word_end_range),
+        MotionKind::WordBackward => counted_range(count, state, word_backward_range),
+        MotionKind::BigWordForward => counted_range(count, state, big_word_forward_range),
+        MotionKind::BigWordEnd => counted_range(count, state, big_word_end_range),
+        MotionKind::BigWordBackward => counted_range(count, state, big_word_backward_range),
+        MotionKind::LineStart => line_start_range(state),
+        MotionKind::LineEnd => line_end_range(state),
+        MotionKind::Down => line_down_range(state, count),
+        MotionKind::Up => line_up_range(state, count),
+        MotionKind::LastRow => to_last_line_range(state),
+        MotionKind::FirstRow => to_first_line_range(state),
+        MotionKind::FirstNonWhitespace | MotionKind::Left | MotionKind::Right => None,
+    }
+}
+
+fn counted_range(
+    count: usize,
+    editor: &EditorState,
+    motion: fn(&EditorState) -> Option<TextRange>,
+) -> Option<TextRange> {
+    let mut scratch = editor.clone();
+    let mut combined: Option<TextRange> = None;
+    for _ in 0..count {
+        let range = motion(&scratch)?;
+        scratch.cursor = range.end;
+        combined = Some(match combined {
+            Some(mut combined_range) => {
+                combined_range.end = range.end;
+                combined_range
+            }
+            None => range,
+        });
+    }
+    combined
+}
+
 pub(crate) fn motion_destination(
     state: &EditorState,
     motion: MotionKind,
