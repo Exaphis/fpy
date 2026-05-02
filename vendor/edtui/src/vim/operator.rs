@@ -214,20 +214,19 @@ fn apply_linewise_edit(
 }
 
 fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
-    if should_restore_linewise_delete_to_column_zero(state, range) {
-        let cursor = state.cursor;
-        state.cursor.col = 0;
-        state.capture();
-        state.cursor = cursor;
-    } else {
-        state.capture();
+    let mut undo_cursor = state.cursor;
+    if range.start.row == range.end.row
+        || (range.start.row == 0 && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
+    {
+        undo_cursor.col = state
+            .lines
+            .iter_row()
+            .nth(state.cursor.row)
+            .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+            .unwrap_or(0)
+            .min(state.cursor.col);
     }
-}
-
-fn should_restore_linewise_delete_to_column_zero(state: &EditorState, range: TextRange) -> bool {
-    range.start.row == range.end.row
-        || (range.start.row == 0
-            && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
+    state.capture_with_cursor(undo_cursor);
 }
 
 fn place_cursor_after_linewise_edit(state: &mut EditorState, deleted_start_row: usize) {

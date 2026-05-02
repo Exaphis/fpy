@@ -182,6 +182,13 @@ const STEP_CASES: &[StepCase] = &[
         initial: "a b c d e",
         steps: &["idef test_1234(x: int):<Esc>", "o    foobar<Esc>", "dd"],
     },
+    StepCase {
+        name: "undo_line_delete_after_char_paste_restores_vim_cursor",
+        initial: "a b c d e",
+        steps: &[
+            "2x", "xp", "dd", "u", "sX<Esc>", "3w", "2dd", "IX<Esc>", "2W",
+        ],
+    },
 ];
 
 #[test]
