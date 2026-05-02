@@ -206,7 +206,23 @@ impl VimCommandContext<'_> {
         }
         let count = self.take_command_count();
         if let Some(range) = vim_motion::char_span_range(editor, count) {
-            vim_operator::apply_operator(editor, Operator::Change, range);
+            if count > 1 {
+                let undo_cursor = if range.start.row == range.end.row
+                    && (range.start.col..=range.end.col).any(|col| {
+                        editor
+                            .lines
+                            .get(crate::Index2::new(range.start.row, col))
+                            .is_some_and(|ch| ch.is_ascii_whitespace())
+                    }) {
+                    range.start
+                } else {
+                    range.end
+                };
+                editor.capture_with_cursor(undo_cursor);
+                vim_operator::apply_operator_without_capture(editor, Operator::Change, range);
+            } else {
+                vim_operator::apply_operator(editor, Operator::Change, range);
+            }
         } else {
             editor.mode = EditorMode::Insert;
         }

@@ -164,6 +164,106 @@ const CASES: &[Case] = &[
         initial: "abc-def ghi",
         keys: "daW",
     },
+    Case {
+        name: "change_inner_word",
+        initial: "abc def ghi",
+        keys: "wciwX<Esc>",
+    },
+    Case {
+        name: "change_around_word",
+        initial: "abc def ghi",
+        keys: "wcawX<Esc>",
+    },
+    Case {
+        name: "change_inner_big_word",
+        initial: "abc-def ghi",
+        keys: "ciWX<Esc>",
+    },
+    Case {
+        name: "change_around_big_word",
+        initial: "abc-def ghi",
+        keys: "caWX<Esc>",
+    },
+    Case {
+        name: "delete_inner_parens",
+        initial: "foo(bar baz) qux",
+        keys: "fbdi(",
+    },
+    Case {
+        name: "delete_around_parens",
+        initial: "foo(bar baz) qux",
+        keys: "fbda(",
+    },
+    Case {
+        name: "delete_inner_double_quotes",
+        initial: "foo \"bar baz\" qux",
+        keys: "fbdi\"",
+    },
+    Case {
+        name: "delete_around_double_quotes",
+        initial: "foo \"bar baz\" qux",
+        keys: "fbda\"",
+    },
+    Case {
+        name: "delete_inner_single_quotes",
+        initial: "foo 'bar baz' qux",
+        keys: "fbdi'",
+    },
+    Case {
+        name: "delete_around_single_quotes",
+        initial: "foo 'bar baz' qux",
+        keys: "fbda'",
+    },
+    Case {
+        name: "delete_inner_brackets",
+        initial: "foo[bar baz] qux",
+        keys: "fbdi[",
+    },
+    Case {
+        name: "delete_around_brackets",
+        initial: "foo[bar baz] qux",
+        keys: "fbda[",
+    },
+    Case {
+        name: "change_inner_parens",
+        initial: "foo(bar baz) qux",
+        keys: "fbci(X<Esc>",
+    },
+    Case {
+        name: "change_around_parens",
+        initial: "foo(bar baz) qux",
+        keys: "fbca(X<Esc>",
+    },
+    Case {
+        name: "change_inner_double_quotes",
+        initial: "foo \"bar baz\" qux",
+        keys: "fbci\"X<Esc>",
+    },
+    Case {
+        name: "change_around_double_quotes",
+        initial: "foo \"bar baz\" qux",
+        keys: "fbca\"X<Esc>",
+    },
+    Case {
+        name: "change_inner_single_quotes",
+        initial: "foo 'bar baz' qux",
+        keys: "fbci'X<Esc>",
+    },
+    Case {
+        name: "change_around_single_quotes",
+        initial: "foo 'bar baz' qux",
+        keys: "fbca'X<Esc>",
+    },
+    Case {
+        name: "change_inner_brackets",
+        initial: "foo[bar baz] qux",
+        keys: "fbci[X<Esc>",
+    },
+    Case {
+        name: "change_around_brackets",
+        initial: "foo[bar baz] qux",
+        keys: "fbca[X<Esc>",
+    },
 ];
 
 const STEP_CASES: &[StepCase] = &[
@@ -277,6 +377,8 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         "2x",
         "2sX<Esc>",
         "xp",
+        "diw",
+        "daw",
         "3w",
         "3b",
         "3e",
@@ -330,6 +432,8 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         "2x",
         "2sX<Esc>",
         "xp",
+        "diw",
+        "daw",
         "3w",
         "3b",
         "3e",

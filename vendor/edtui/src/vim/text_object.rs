@@ -9,7 +9,7 @@ pub(crate) fn inner_word_range(state: &EditorState) -> Option<TextRange> {
 }
 
 pub(crate) fn around_word_range(state: &EditorState) -> Option<TextRange> {
-    include_around_whitespace(state, inner_word_range(state)?)
+    around_word_range_by(state, |ch, class| CharacterClass::from(&ch) == class)
 }
 
 pub(crate) fn inner_big_word_range(state: &EditorState) -> Option<TextRange> {
@@ -21,7 +21,7 @@ pub(crate) fn inner_big_word_range(state: &EditorState) -> Option<TextRange> {
 }
 
 pub(crate) fn around_big_word_range(state: &EditorState) -> Option<TextRange> {
-    include_around_whitespace(state, inner_big_word_range(state)?)
+    around_word_range_by(state, |ch, _| !ch.is_ascii_whitespace())
 }
 
 pub(crate) fn inner_between_range(
@@ -47,13 +47,56 @@ fn word_range_by(
     let row_index = state.cursor.row;
     let line = state.lines.get(RowIndex::new(row_index))?;
     let len_col = state.lines.len_col(row_index)?;
-    if len_col == 0 || state.cursor.col >= len_col {
+    if len_col == 0 {
+        if row_index > 0 {
+            let prev_row = row_index - 1;
+            let prev_len = state.lines.len_col(prev_row).unwrap_or_default();
+            if prev_len > 0 {
+                let prev_line = state.lines.get(RowIndex::new(prev_row))?;
+                let mut end_col = prev_len - 1;
+                while end_col > 0 && prev_line[end_col].is_ascii_whitespace() {
+                    end_col -= 1;
+                }
+                if !prev_line[end_col].is_ascii_whitespace() {
+                    return Some(TextRange::exclusive(
+                        Index2::new(prev_row, end_col),
+                        Index2::new(row_index, 1),
+                    ));
+                }
+            }
+        }
+        return None;
+    }
+    if state.cursor.col >= len_col {
         return None;
     }
 
-    let start_char = *line.get(state.cursor.col)?;
+    let mut cursor_col = state.cursor.col;
+    if line.get(cursor_col).is_some_and(|ch| ch.is_ascii_whitespace()) {
+        let mut whitespace_start = cursor_col;
+        while whitespace_start > 0
+            && line
+                .get(whitespace_start - 1)
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            whitespace_start -= 1;
+        }
+        while cursor_col + 1 < len_col
+            && line
+                .get(cursor_col + 1)
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            cursor_col += 1;
+        }
+        return Some(TextRange::inclusive(
+            Index2::new(row_index, whitespace_start),
+            Index2::new(row_index, cursor_col),
+        ));
+    }
+
+    let start_char = *line.get(cursor_col)?;
     let class = CharacterClass::from(&start_char);
-    let mut start = state.cursor.col;
+    let mut start = cursor_col;
     while start > 0
         && line
             .get(start - 1)
@@ -61,7 +104,7 @@ fn word_range_by(
     {
         start -= 1;
     }
-    let mut end = state.cursor.col;
+    let mut end = cursor_col;
     while end + 1 < len_col
         && line
             .get(end + 1)
@@ -73,6 +116,84 @@ fn word_range_by(
         Index2::new(row_index, start),
         Index2::new(row_index, end),
     ))
+}
+
+fn around_word_range_by(
+    state: &EditorState,
+    same_unit: impl Fn(char, CharacterClass) -> bool,
+) -> Option<TextRange> {
+    let row_index = state.cursor.row;
+    let line = state.lines.get(RowIndex::new(row_index))?;
+    let len_col = state.lines.len_col(row_index)?;
+    if len_col == 0 {
+        if row_index + 1 < state.lines.iter_row().count() {
+            let next_row = row_index + 1;
+            let next_len = state.lines.len_col(next_row).unwrap_or_default();
+            if next_len > 0 {
+                let next_line = state.lines.get(RowIndex::new(next_row))?;
+                let mut end_col = 0;
+                while end_col < next_len && next_line[end_col].is_ascii_whitespace() {
+                    end_col += 1;
+                }
+                if end_col < next_len {
+                    let class = CharacterClass::from(&next_line[end_col]);
+                    while end_col + 1 < next_len
+                        && next_line
+                            .get(end_col + 1)
+                            .is_some_and(|ch| same_unit(*ch, class.clone()))
+                    {
+                        end_col += 1;
+                    }
+                    return Some(TextRange::exclusive(
+                        Index2::new(row_index, 0),
+                        Index2::new(next_row, end_col + 1),
+                    ));
+                }
+            }
+        }
+        return None;
+    }
+    if state.cursor.col >= len_col {
+        return None;
+    }
+    if line
+        .get(state.cursor.col)
+        .is_some_and(|ch| ch.is_ascii_whitespace())
+    {
+        let mut start = state.cursor.col;
+        while start > 0
+            && line
+                .get(start - 1)
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            start -= 1;
+        }
+        let mut end = state.cursor.col;
+        while end + 1 < len_col
+            && line
+                .get(end + 1)
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            end += 1;
+        }
+        if end + 1 >= len_col {
+            return None;
+        }
+        end += 1;
+        let class = CharacterClass::from(&line[end]);
+        while end + 1 < len_col
+            && line
+                .get(end + 1)
+                .is_some_and(|ch| same_unit(*ch, class.clone()))
+        {
+            end += 1;
+        }
+        return Some(TextRange::inclusive(
+            Index2::new(row_index, start),
+            Index2::new(row_index, end),
+        ));
+    }
+    include_around_whitespace(state, word_range_by(state, same_unit)?)
 }
 
 fn include_around_whitespace(state: &EditorState, range: TextRange) -> Option<TextRange> {
@@ -93,15 +214,19 @@ fn include_around_whitespace(state: &EditorState, range: TextRange) -> Option<Te
         return Some(TextRange::inclusive(range.start, end));
     }
     let mut start = range.start;
-    while start.col > 0 {
-        let prev_col = start.col - 1;
+    let mut whitespace_start = range.start;
+    while whitespace_start.col > 0 {
+        let prev_col = whitespace_start.col - 1;
         let Some(ch) = state.lines.get(Index2::new(row_index, prev_col)) else {
             break;
         };
         if !ch.is_ascii_whitespace() {
             break;
         }
-        start.col = prev_col;
+        whitespace_start.col = prev_col;
+    }
+    if whitespace_start.col > 0 {
+        start = whitespace_start;
     }
     Some(TextRange::inclusive(start, range.end))
 }
@@ -121,10 +246,22 @@ fn between_range(
         |(_, _)| false,
     )?;
     if around {
-        Some(TextRange::inclusive(
-            Index2::new(inner.start.row, inner.start.col.saturating_sub(1)),
-            Index2::new(inner.end.row, inner.end.col.saturating_add(1)),
-        ))
+        let start = Index2::new(inner.start.row, inner.start.col.saturating_sub(1));
+        let mut end = Index2::new(inner.end.row, inner.end.col.saturating_add(1));
+        if opening == closing {
+            let line_len = state.lines.len_col(end.row)?;
+            while end.col + 1 < line_len {
+                let next_col = end.col + 1;
+                let Some(ch) = state.lines.get(Index2::new(end.row, next_col)) else {
+                    break;
+                };
+                if !ch.is_ascii_whitespace() {
+                    break;
+                }
+                end.col = next_col;
+            }
+        }
+        Some(TextRange::inclusive(start, end))
     } else {
         Some(TextRange::inclusive(inner.start, inner.end))
     }

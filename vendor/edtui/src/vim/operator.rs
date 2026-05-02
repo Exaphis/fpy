@@ -30,9 +30,12 @@ pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
         }
         return;
     };
-    if let Some(anchor) = state.vim_undo_cursor_anchor {
+    if let Some(anchor) = state.vim_undo_cursor_anchor.filter(|anchor| {
+        anchor.row < state.cursor.row || (anchor.row == state.cursor.row && anchor.col <= state.cursor.col)
+    }) {
         state.capture_with_cursor(anchor);
         apply_operator_without_capture(state, Operator::Delete, range);
+        state.vim_undo_cursor_anchor = None;
     } else {
         apply_operator(state, Operator::Delete, range);
     }
@@ -155,7 +158,12 @@ fn apply_operator_with_capture(
         }
         Operator::Delete | Operator::Change => {
             if capture {
-                state.capture();
+                let undo_cursor = if operator == Operator::Delete {
+                    range.start
+                } else {
+                    state.cursor
+                };
+                state.capture_with_cursor(undo_cursor);
             }
             let yanked = extract_range(state, range);
             state.clip.set_text(lines_to_text(&yanked));

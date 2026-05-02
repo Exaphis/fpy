@@ -804,6 +804,7 @@ impl KeyEventHandler {
             if matches!(mode, EditorMode::Normal | EditorMode::Visual) {
                 let entering_insert = VimCommandExecutor::execute_normal_action(&mut action, state);
                 if entering_insert {
+                    state.vim_undo_cursor_anchor = None;
                     self.vim_insert_session_active = true;
                 }
             } else {
