@@ -31,6 +31,9 @@ pub struct EditorState {
     /// Represents the selection in the editor, if any.
     pub selection: Option<Selection>,
 
+    /// Last completed Vim visual selection, used by `gv`.
+    pub(crate) vim_last_visual_selection: Option<Selection>,
+
     /// Custom highlight ranges with their styles.
     pub highlights: Vec<Highlight>,
 
@@ -97,6 +100,7 @@ impl EditorState {
             cursor: Index2::new(0, 0),
             mode: EditorMode::Normal,
             selection: None,
+            vim_last_visual_selection: None,
             highlights: Vec::new(),
             view: ViewState::default(),
             search: SearchState::default(),

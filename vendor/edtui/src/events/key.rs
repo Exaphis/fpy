@@ -776,6 +776,12 @@ impl KeyEventHandler {
             return;
         }
 
+        let visual_selection_before_action = if mode == EditorMode::Visual {
+            state.selection.clone()
+        } else {
+            None
+        };
+
         if mode == EditorMode::Normal {
             let handled = VimCommandExecutor::execute_handled(state, |state| {
                 self.vim_command_context().handle_normal_key(key_input, state)
@@ -807,6 +813,9 @@ impl KeyEventHandler {
                     state.vim_undo_cursor_anchor = None;
                     self.vim_insert_session_active = true;
                 }
+                if mode == EditorMode::Visual && state.mode != EditorMode::Visual {
+                    state.vim_last_visual_selection = visual_selection_before_action;
+                }
             } else {
                 action.execute(state);
                 if mode == EditorMode::Insert
@@ -815,6 +824,9 @@ impl KeyEventHandler {
                 {
                     VimCommandExecutor::end_insert_session(state);
                     self.vim_insert_session_active = false;
+                }
+                if mode == EditorMode::Visual && state.mode != EditorMode::Visual {
+                    state.vim_last_visual_selection = visual_selection_before_action;
                 }
             }
             self.vim.clear();

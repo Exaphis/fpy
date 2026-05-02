@@ -9,6 +9,8 @@ pub(crate) enum Operator {
     Delete,
     Change,
     Yank,
+    Indent,
+    Outdent,
 }
 
 pub(crate) fn apply_operator(state: &mut EditorState, operator: Operator, range: TextRange) {
@@ -167,6 +169,8 @@ fn apply_operator_with_capture(
 ) {
     match operator {
         Operator::Yank => yank_range(state, range),
+        Operator::Indent => shift_lines(state, range, ShiftDirection::Right, capture),
+        Operator::Outdent => shift_lines(state, range, ShiftDirection::Left, capture),
         Operator::Delete | Operator::Change if range.kind == RangeKind::Linewise => {
             apply_linewise_edit(state, operator, range, capture);
         }
@@ -197,6 +201,56 @@ fn apply_operator_with_capture(
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShiftDirection {
+    Left,
+    Right,
+}
+
+fn shift_lines(state: &mut EditorState, range: TextRange, direction: ShiftDirection, capture: bool) {
+    if capture {
+        state.capture();
+    }
+    let row_count = state.lines.iter_row().count();
+    if row_count == 0 {
+        return;
+    }
+    let start_row = range.start.row.min(row_count.saturating_sub(1));
+    let end_row = range.end.row.min(row_count.saturating_sub(1));
+    for row_index in start_row..=end_row {
+        let Some(row) = state.lines.get_mut(RowIndex::new(row_index)) else {
+            continue;
+        };
+        match direction {
+            ShiftDirection::Right => {
+                row.splice(0..0, [' ', ' ', ' ', ' ']);
+            }
+            ShiftDirection::Left => {
+                if row.first() == Some(&'\t') {
+                    row.remove(0);
+                } else {
+                    let remove_count = row.iter().take(4).take_while(|ch| **ch == ' ').count();
+                    for _ in 0..remove_count {
+                        row.remove(0);
+                    }
+                }
+            }
+        }
+    }
+    state.cursor.row = start_row;
+    place_cursor_after_shift(state);
+    state.preferred_col = None;
+}
+
+fn place_cursor_after_shift(state: &mut EditorState) {
+    state.cursor.col = state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+        .unwrap_or(0);
 }
 
 fn yank_range(state: &mut EditorState, range: TextRange) {

@@ -264,6 +264,56 @@ const CASES: &[Case] = &[
         initial: "foo[bar baz] qux",
         keys: "fbca[X<Esc>",
     },
+    Case {
+        name: "indent_current_line",
+        initial: "abc\ndef",
+        keys: ">>",
+    },
+    Case {
+        name: "outdent_current_line",
+        initial: "    abc\ndef",
+        keys: "<lt><lt>",
+    },
+    Case {
+        name: "indent_down_motion",
+        initial: "abc\ndef\nghi",
+        keys: ">j",
+    },
+    Case {
+        name: "outdent_down_motion",
+        initial: "    abc\n    def\nghi",
+        keys: "<lt>j",
+    },
+    Case {
+        name: "gv_reselects_previous_visual_selection",
+        initial: "abc def ghi",
+        keys: "ve<Esc>gvd",
+    },
+    Case {
+        name: "gv_reselects_previous_visual_line_selection",
+        initial: "abc\ndef\nghi",
+        keys: "Vj<Esc>gvd",
+    },
+    Case {
+        name: "visual_indent_char_selection",
+        initial: "abc\ndef\nghi",
+        keys: "vj>",
+    },
+    Case {
+        name: "visual_outdent_char_selection",
+        initial: "    abc\n    def\nghi",
+        keys: "vj<lt>",
+    },
+    Case {
+        name: "visual_indent_line_selection",
+        initial: "abc\ndef\nghi",
+        keys: "Vj>",
+    },
+    Case {
+        name: "visual_outdent_line_selection",
+        initial: "    abc\n    def\nghi",
+        keys: "Vj<lt>",
+    },
 ];
 
 const STEP_CASES: &[StepCase] = &[
@@ -602,7 +652,7 @@ fn run_vim_steps_with_trace(vim: &str, initial: &str, steps: &[&str]) -> Vec<Sna
     fs::write(
         &script,
         format!(
-            "set nomore\nset nofixendofline\nexecute 'edit ' . {file_arg}\nnormal! gg0\n{normal_commands}call writefile([line('.') . ':' . col('.')], {cursor_file_arg})\nwrite!\nqall!\n"
+            "set nomore\nset nofixendofline\nset expandtab shiftwidth=4 tabstop=4 softtabstop=4\nexecute 'edit ' . {file_arg}\nnormal! gg0\n{normal_commands}call writefile([line('.') . ':' . col('.')], {cursor_file_arg})\nwrite!\nqall!\n"
         ),
     )
     .expect("write vim script");
@@ -697,6 +747,7 @@ fn parse_keys(keys: &str) -> Vec<KeyInput> {
                 "BS" => out.push(KeyInput::new(crossterm::event::KeyCode::Backspace)),
                 "Tab" => out.push(KeyInput::new(crossterm::event::KeyCode::Tab)),
                 "C-r" => out.push(KeyInput::ctrl('r')),
+                "lt" => out.push(KeyInput::new('<')),
                 other => panic!("unsupported key token <{other}>"),
             }
         } else if ch.is_ascii_uppercase() {
@@ -729,6 +780,7 @@ fn vim_normal_execute_arg(keys: &str) -> String {
                     "BS" => out.push_str("\\<BS>"),
                     "Tab" => out.push_str("\\<Tab>"),
                     "C-r" => out.push_str("\\<C-r>"),
+                    "lt" => out.push('<'),
                     other => panic!("unsupported key token <{other}>"),
                 }
             }

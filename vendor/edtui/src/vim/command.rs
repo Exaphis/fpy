@@ -130,6 +130,11 @@ impl VimCommandContext<'_> {
                 self.state.clear();
                 return true;
             }
+            if key_input.key == Char('v') && key_input.modifiers == input::Modifiers::NONE {
+                self.lookup.clear();
+                self.state.clear();
+                return vim_visual::restore_last_selection(editor);
+            }
             self.lookup.clear();
             self.state.clear();
             return false;
@@ -297,7 +302,7 @@ impl VimCommandContext<'_> {
         use input::KeyCode::Char;
 
         if self.lookup.is_empty() {
-            if matches!(key_input.key, Char('d' | 'c' | 'y'))
+            if matches!(key_input.key, Char('d' | 'c' | 'y' | '>' | '<'))
                 && key_input.modifiers == input::Modifiers::NONE
             {
                 self.lookup.push(key_input);
@@ -307,7 +312,7 @@ impl VimCommandContext<'_> {
             return false;
         }
 
-        let Char(op @ ('d' | 'c' | 'y')) = self.lookup[0].key else {
+        let Char(op @ ('d' | 'c' | 'y' | '>' | '<')) = self.lookup[0].key else {
             return false;
         };
 
@@ -417,11 +422,14 @@ fn handle_visual_operator_key(key_input: KeyInput, editor: &mut EditorState) -> 
         Char('d' | 'x') => 'd',
         Char('c') => 'c',
         Char('y') => 'y',
+        Char('>') => '>',
+        Char('<') => '<',
         _ => return false,
     };
     let Some(range) = vim_visual::selection_range(editor) else {
         return false;
     };
+    editor.vim_last_visual_selection = editor.selection.clone();
     editor.selection = None;
     apply_operator(op, editor, range);
     if op != 'c' {
@@ -479,6 +487,8 @@ fn apply_operator(op: char, editor: &mut EditorState, range: TextRange) {
         'd' => Operator::Delete,
         'c' => Operator::Change,
         'y' => Operator::Yank,
+        '>' => Operator::Indent,
+        '<' => Operator::Outdent,
         _ => return,
     };
     vim_operator::apply_operator(editor, operator, range);
@@ -489,6 +499,8 @@ fn apply_operator_without_capture(op: char, editor: &mut EditorState, range: Tex
         'd' => Operator::Delete,
         'c' => Operator::Change,
         'y' => Operator::Yank,
+        '>' => Operator::Indent,
+        '<' => Operator::Outdent,
         _ => return,
     };
     vim_operator::apply_operator_without_capture(editor, operator, range);

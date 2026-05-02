@@ -11,6 +11,16 @@ pub(crate) fn apply_range_as_selection(state: &mut EditorState, range: TextRange
     state.mode = EditorMode::Visual;
 }
 
+pub(crate) fn restore_last_selection(state: &mut EditorState) -> bool {
+    let Some(selection) = state.vim_last_visual_selection.clone() else {
+        return false;
+    };
+    state.cursor = selection.end;
+    state.selection = Some(selection);
+    state.mode = EditorMode::Visual;
+    true
+}
+
 pub(crate) fn select_current_line(state: &mut EditorState) {
     let row = state.cursor.row;
     if let Some(len_col) = state.lines.len_col(row) {
