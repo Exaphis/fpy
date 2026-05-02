@@ -207,18 +207,7 @@ impl VimCommandContext<'_> {
         let count = self.take_command_count();
         if let Some(range) = vim_motion::char_span_range(editor, count) {
             if count > 1 {
-                let undo_cursor = if range.start.row == range.end.row
-                    && (range.start.col..=range.end.col).any(|col| {
-                        editor
-                            .lines
-                            .get(crate::Index2::new(range.start.row, col))
-                            .is_some_and(|ch| ch.is_ascii_whitespace())
-                    }) {
-                    range.start
-                } else {
-                    range.end
-                };
-                editor.capture_with_cursor(undo_cursor);
+                editor.capture_with_cursor(range.start);
                 vim_operator::apply_operator_without_capture(editor, Operator::Change, range);
             } else {
                 vim_operator::apply_operator(editor, Operator::Change, range);
@@ -374,7 +363,24 @@ impl VimCommandContext<'_> {
                     return true;
                 }
             } else if let Some(range) = text_object_range(prefix, key_input, editor) {
-                apply_operator(op, editor, range);
+                if op == 'c' && matches!(prefix, 'i' | 'a') {
+                    editor.capture_with_cursor(range.start);
+                    apply_operator_without_capture(op, editor, range);
+                } else {
+                    apply_operator(op, editor, range);
+                }
+                self.lookup.clear();
+                self.state.clear();
+                return true;
+            } else if op == 'c'
+                && prefix == 'i'
+                && editor.lines.len_col(editor.cursor.row).unwrap_or_default() == 0
+            {
+                if !editor.lines.iter_row().any(|row| !row.is_empty()) {
+                    editor.lines = crate::Lines::from("");
+                    editor.cursor = crate::Index2::new(0, 0);
+                }
+                editor.mode = EditorMode::Insert;
                 self.lookup.clear();
                 self.state.clear();
                 return true;
@@ -474,6 +480,16 @@ fn apply_operator(op: char, editor: &mut EditorState, range: TextRange) {
         _ => return,
     };
     vim_operator::apply_operator(editor, operator, range);
+}
+
+fn apply_operator_without_capture(op: char, editor: &mut EditorState, range: TextRange) {
+    let operator = match op {
+        'd' => Operator::Delete,
+        'c' => Operator::Change,
+        'y' => Operator::Yank,
+        _ => return,
+    };
+    vim_operator::apply_operator_without_capture(editor, operator, range);
 }
 
 fn text_object_range(prefix: char, key_input: KeyInput, editor: &EditorState) -> Option<TextRange> {

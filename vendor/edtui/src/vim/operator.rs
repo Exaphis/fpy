@@ -60,7 +60,11 @@ pub(crate) fn change_to_end_of_line(state: &mut EditorState) {
 }
 
 pub(crate) fn paste_after(state: &mut EditorState) {
-    let text = state.clip.get_text();
+    let mut text = state.clip.get_text();
+    if text.is_empty() && !state.lines.iter_row().any(|row| !row.is_empty()) {
+        text = "\n".to_string();
+        state.vim_last_yank_linewise = true;
+    }
     if text.is_empty() {
         return;
     }
@@ -72,9 +76,19 @@ pub(crate) fn paste_after(state: &mut EditorState) {
             .iter_row()
             .map(|row| row.iter().collect::<String>())
             .collect();
+        if rows.is_empty() {
+            rows.push(String::new());
+        }
         let insert_at = (state.cursor.row + 1).min(rows.len());
-        let pasted_text = text.trim_start_matches('\n').trim_end_matches('\n');
-        let pasted_rows = pasted_text.split('\n').map(str::to_string);
+        let pasted_text = text.trim_start_matches('\n');
+        let mut pasted_rows: Vec<String> = if pasted_text.is_empty() {
+            vec![String::new()]
+        } else {
+            pasted_text.split('\n').map(str::to_string).collect()
+        };
+        if pasted_text.len() > 1 && pasted_rows.last().is_some_and(|row| row.is_empty()) {
+            pasted_rows.pop();
+        }
         rows.splice(insert_at..insert_at, pasted_rows);
         state.lines = Lines::default();
         for row in rows {
@@ -202,7 +216,7 @@ fn apply_linewise_edit(
     if state.lines.iter_row().count() == 1
         && state.lines.len_col(0).unwrap_or_default() == 0
     {
-        if !state.vim_last_yank_linewise {
+        if !state.vim_last_yank_linewise || state.clip.get_text().is_empty() {
             state.clip.set_text("\n".to_string());
             state.vim_last_yank_linewise = true;
         }
@@ -226,13 +240,19 @@ fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
     if range.start.row == range.end.row
         || (range.start.row == 0 && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
     {
-        undo_cursor.col = state
+        let first_non_whitespace = state
             .lines
             .iter_row()
             .nth(state.cursor.row)
             .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
-            .unwrap_or(0)
-            .min(state.cursor.col);
+            .unwrap_or(0);
+        undo_cursor.col = if first_non_whitespace == 0 && state.lines.iter_row().count() == 1 {
+            0
+        } else if first_non_whitespace == 0 {
+            state.cursor.col
+        } else {
+            first_non_whitespace.min(state.cursor.col)
+        };
     }
     state.capture_with_cursor(undo_cursor);
 }
