@@ -9,7 +9,7 @@ pub(crate) fn inner_word_range(state: &EditorState) -> Option<TextRange> {
 }
 
 pub(crate) fn around_word_range(state: &EditorState) -> Option<TextRange> {
-    include_trailing_whitespace(state, inner_word_range(state)?)
+    include_around_whitespace(state, inner_word_range(state)?)
 }
 
 pub(crate) fn inner_big_word_range(state: &EditorState) -> Option<TextRange> {
@@ -21,7 +21,7 @@ pub(crate) fn inner_big_word_range(state: &EditorState) -> Option<TextRange> {
 }
 
 pub(crate) fn around_big_word_range(state: &EditorState) -> Option<TextRange> {
-    include_trailing_whitespace(state, inner_big_word_range(state)?)
+    include_around_whitespace(state, inner_big_word_range(state)?)
 }
 
 pub(crate) fn inner_between_range(
@@ -75,7 +75,7 @@ fn word_range_by(
     ))
 }
 
-fn include_trailing_whitespace(state: &EditorState, range: TextRange) -> Option<TextRange> {
+fn include_around_whitespace(state: &EditorState, range: TextRange) -> Option<TextRange> {
     let row_index = range.end.row;
     let line_len = state.lines.len_col(row_index)?;
     let mut end = range.end;
@@ -89,7 +89,21 @@ fn include_trailing_whitespace(state: &EditorState, range: TextRange) -> Option<
         }
         end.col = next_col;
     }
-    Some(TextRange::inclusive(range.start, end))
+    if end.col != range.end.col {
+        return Some(TextRange::inclusive(range.start, end));
+    }
+    let mut start = range.start;
+    while start.col > 0 {
+        let prev_col = start.col - 1;
+        let Some(ch) = state.lines.get(Index2::new(row_index, prev_col)) else {
+            break;
+        };
+        if !ch.is_ascii_whitespace() {
+            break;
+        }
+        start.col = prev_col;
+    }
+    Some(TextRange::inclusive(start, range.end))
 }
 
 fn between_range(

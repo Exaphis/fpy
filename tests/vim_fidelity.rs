@@ -144,6 +144,26 @@ const CASES: &[Case] = &[
         initial: "abc\ndef",
         keys: "ddpu",
     },
+    Case {
+        name: "delete_inner_word",
+        initial: "abc def ghi",
+        keys: "wdiw",
+    },
+    Case {
+        name: "delete_around_word",
+        initial: "abc def ghi",
+        keys: "wdaw",
+    },
+    Case {
+        name: "delete_inner_big_word",
+        initial: "abc-def ghi",
+        keys: "diW",
+    },
+    Case {
+        name: "delete_around_big_word",
+        initial: "abc-def ghi",
+        keys: "daW",
+    },
 ];
 
 const STEP_CASES: &[StepCase] = &[
