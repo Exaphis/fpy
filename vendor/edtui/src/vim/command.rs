@@ -161,11 +161,12 @@ impl VimCommandContext<'_> {
                 editor.discard_redundant_undo_top();
             }
             editor.cursor = destination;
-            editor.preferred_col = if matches!(motion, MotionKind::LineEnd | MotionKind::Up | MotionKind::Down) {
-                preferred_col
+            if matches!(motion, MotionKind::LineEnd | MotionKind::Up | MotionKind::Down) {
+                editor.preferred_col = preferred_col;
             } else {
-                None
-            };
+                editor.preferred_col = None;
+            }
+
             editor.clamp_column();
         }
         self.lookup.clear();
@@ -213,6 +214,7 @@ impl VimCommandContext<'_> {
                 vim_operator::apply_operator(editor, Operator::Change, range);
             }
         } else {
+            editor.capture();
             editor.mode = EditorMode::Insert;
         }
         self.lookup.clear();

@@ -440,3 +440,17 @@ cargo test --test vim_fidelity --no-run
 cargo test
 cargo clippy --all-targets --all-features
 ```
+
+### Known 5000-iteration cursor-only divergence: `2B` across blank indented line
+
+After fixing `s` on an empty buffer after `dd`, a longer 5000-iteration oracle run exposed a remaining cursor-only mismatch:
+
+```text
+initial: "alpha beta\ngamma delta"
+keys: "fa_ciwX<Esc>02lidef test_1234(x: int):<Esc>o    foobar<Esc>CX<Esc>u$dawE2B"
+
+edtui: Snapshot { text: "X def test_1234(x: int):beta\n    \ngamma delta", cursor: (1, 0) }
+vim:   Snapshot { text: "X def test_1234(x: int):beta\n    \ngamma delta", cursor: (0, 19) }
+```
+
+The text matches; only the final cursor differs. The reduced shape appears to involve `daw` leaving an indented blank line, followed by `E2B`. Naive attempts to special-case big-word backward across blank/indented lines caused earlier fuzz regressions, so leave this as follow-up motion fidelity work rather than a targeted cursor clamp.

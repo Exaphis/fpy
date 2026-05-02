@@ -289,6 +289,11 @@ const STEP_CASES: &[StepCase] = &[
             "2x", "xp", "dd", "u", "sX<Esc>", "3w", "2dd", "IX<Esc>", "2W",
         ],
     },
+    StepCase {
+        name: "undo_substitute_after_line_delete_restores_empty_buffer",
+        initial: "a b c d e",
+        steps: &["G", "Fa", "2sX<Esc>", "<C-r>", "dd", "sX<Esc>", "u"],
+    },
 ];
 
 #[test]
