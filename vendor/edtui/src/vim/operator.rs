@@ -30,7 +30,12 @@ pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
         }
         return;
     };
-    apply_operator(state, Operator::Delete, range);
+    if let Some(anchor) = state.vim_undo_cursor_anchor {
+        state.capture_with_cursor(anchor);
+        apply_operator_without_capture(state, Operator::Delete, range);
+    } else {
+        apply_operator(state, Operator::Delete, range);
+    }
 }
 
 pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
@@ -163,6 +168,7 @@ fn apply_operator_with_capture(
                         .col
                         .min(state.lines.len_col(range.start.row).unwrap_or_default()),
                 );
+                state.vim_undo_cursor_anchor = Some(state.cursor);
                 state.mode = EditorMode::Insert;
             } else {
                 clamp_cursor(state);

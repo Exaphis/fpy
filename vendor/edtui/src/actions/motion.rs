@@ -156,6 +156,10 @@ fn move_word_forward(state: &mut EditorState) {
         (true, true) => return,
         (true, false) => {
             state.cursor = Index2::new(state.cursor.row.saturating_add(1), 0);
+            if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+                return;
+            }
+            skip_whitespace_across_lines(state);
             return;
         }
         _ => Index2::new(state.cursor.row, state.cursor.col.saturating_add(1)),

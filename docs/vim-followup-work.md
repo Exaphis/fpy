@@ -128,6 +128,27 @@ The expected final state should reflect interactive Vim behavior, not one batch 
 
 After that is stable, add the construction atom to fuzz without trailing `u`.
 
+Known blocker from attempting to add the construction atom to random fuzz: it changes corpus ordering enough to expose existing undo cursor fidelity gaps around character deletes after prior insert/change sessions. A reduced failing shape is:
+
+```text
+initial: "abc def\nxyz"
+steps:
+  IX<Esc>
+  k
+  gg
+  sX<Esc>
+  3e
+  W
+  2x
+  2k
+  u
+
+edtui cursor after undo: (1, 2)
+vim cursor after undo:   (0, 0)
+```
+
+A naive rule that captures character deletes on later rows with cursor `(0, 0)` fixes this shape but breaks dynamic multiline undo after deleting near the opened line. Treat this as an undo metadata/modeling task, not a one-off cursor clamp.
+
 ### Phase F: Text Objects
 
 Golden cases:

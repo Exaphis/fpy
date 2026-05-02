@@ -55,6 +55,9 @@ pub struct EditorState {
     /// Whether the last Vim operator populated the clipboard linewise.
     pub(crate) vim_last_yank_linewise: bool,
 
+    /// Cursor position of the most recent completed Vim edit, used by Vim undo.
+    pub(crate) vim_undo_cursor_anchor: Option<Index2>,
+
     /// Nesting depth for undo captures coalesced into a single transaction.
     pub(crate) undo_transaction_depth: usize,
 
@@ -102,6 +105,7 @@ impl EditorState {
             clip: Clipboard::default(),
             preferred_col: None,
             vim_last_yank_linewise: false,
+            vim_undo_cursor_anchor: None,
             undo_transaction_depth: 0,
             undo_transaction_captured: false,
             #[cfg(feature = "system-editor")]

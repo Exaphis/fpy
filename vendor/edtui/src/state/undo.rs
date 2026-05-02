@@ -65,12 +65,16 @@ impl EditorState {
     }
 
     pub(crate) fn capture(&mut self) {
+        self.capture_with_cursor(self.cursor);
+    }
+
+    pub(crate) fn capture_with_cursor(&mut self, cursor: Index2) {
         if self.undo_transaction_depth > 0 && self.undo_transaction_captured {
             return;
         }
         let editor_state = UndoState {
             lines: self.lines.clone(),
-            cursor: self.cursor,
+            cursor,
         };
         self.undo.push(editor_state);
         self.redo = Stack::new();
