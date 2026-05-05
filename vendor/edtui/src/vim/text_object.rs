@@ -48,6 +48,11 @@ fn word_range_by(
     let line = state.lines.get(RowIndex::new(row_index))?;
     let len_col = state.lines.len_col(row_index)?;
     if len_col == 0 {
+        if row_index + 1 < state.lines.iter_row().count()
+            && state.lines.len_col(row_index + 1).unwrap_or_default() > 0
+        {
+            return None;
+        }
         if row_index > 0 {
             let prev_row = row_index - 1;
             let prev_len = state.lines.len_col(prev_row).unwrap_or_default();
@@ -129,6 +134,12 @@ fn around_word_range_by(
         if row_index + 1 < state.lines.iter_row().count() {
             let next_row = row_index + 1;
             let next_len = state.lines.len_col(next_row).unwrap_or_default();
+            if next_len == 0 {
+                return Some(TextRange::exclusive(
+                    Index2::new(row_index, 0),
+                    Index2::new(next_row, 0),
+                ));
+            }
             if next_len > 0 {
                 let next_line = state.lines.get(RowIndex::new(next_row))?;
                 let mut end_col = 0;
@@ -177,7 +188,7 @@ fn around_word_range_by(
             end += 1;
         }
         if end + 1 >= len_col {
-            return None;
+            return around_word_across_next_line(state, row_index, start, same_unit);
         }
         end += 1;
         let class = CharacterClass::from(&line[end]);
@@ -194,6 +205,39 @@ fn around_word_range_by(
         ));
     }
     include_around_whitespace(state, word_range_by(state, same_unit)?)
+}
+
+fn around_word_across_next_line(
+    state: &EditorState,
+    row_index: usize,
+    start_col: usize,
+    same_unit: impl Fn(char, CharacterClass) -> bool,
+) -> Option<TextRange> {
+    let next_row = row_index + 1;
+    let next_len = state.lines.len_col(next_row).unwrap_or_default();
+    if next_len == 0 {
+        return None;
+    }
+    let next_line = state.lines.get(RowIndex::new(next_row))?;
+    let mut end_col = 0;
+    while end_col < next_len && next_line[end_col].is_ascii_whitespace() {
+        end_col += 1;
+    }
+    if end_col >= next_len {
+        return None;
+    }
+    let class = CharacterClass::from(&next_line[end_col]);
+    while end_col + 1 < next_len
+        && next_line
+            .get(end_col + 1)
+            .is_some_and(|ch| same_unit(*ch, class.clone()))
+    {
+        end_col += 1;
+    }
+    Some(TextRange::exclusive(
+        Index2::new(row_index, start_col),
+        Index2::new(next_row, end_col + 1),
+    ))
 }
 
 fn include_around_whitespace(state: &EditorState, range: TextRange) -> Option<TextRange> {

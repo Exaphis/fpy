@@ -84,11 +84,9 @@ impl EditorState {
     }
 
     pub(crate) fn discard_redundant_undo_top(&mut self) {
-        if self
-            .undo
-            .peek()
-            .is_some_and(|prev| prev.lines.to_string() == self.lines.to_string())
-        {
+        if self.undo.peek().is_some_and(|prev| {
+            prev.lines.to_string() == self.lines.to_string() && prev.cursor == self.cursor
+        }) {
             let _ = self.undo.pop();
         }
     }

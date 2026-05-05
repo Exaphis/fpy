@@ -32,9 +32,10 @@ pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
         }
         return;
     };
-    if let Some(anchor) = state.vim_undo_cursor_anchor.filter(|anchor| {
-        anchor.row < state.cursor.row || (anchor.row == state.cursor.row && anchor.col <= state.cursor.col)
-    }) {
+    if let Some(anchor) = state
+        .vim_undo_cursor_anchor
+        .filter(|anchor| anchor.row == state.cursor.row && anchor.col <= state.cursor.col)
+    {
         state.capture_with_cursor(anchor);
         apply_operator_without_capture(state, Operator::Delete, range);
         state.vim_undo_cursor_anchor = None;

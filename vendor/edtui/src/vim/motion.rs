@@ -113,25 +113,24 @@ pub(crate) fn motion_effect(
 
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
     use crate::actions::{
-        Execute, MoveBigWordBackward, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp,
-        MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
+        Execute, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp, MoveWordForward,
+        MoveWordForwardToEndOfWord,
     };
 
     match motion {
         MotionKind::WordForward => MoveWordForward(1).execute(state),
         MotionKind::WordEnd => MoveWordForwardToEndOfWord(1).execute(state),
-        MotionKind::WordBackward => MoveWordBackward(1).execute(state),
+        MotionKind::WordBackward => move_word_backward_once(state),
         MotionKind::BigWordForward => move_big_word_forward_once(state),
         MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
-        MotionKind::BigWordBackward => MoveBigWordBackward(1).execute(state),
+        MotionKind::BigWordBackward => move_big_word_backward_once(state),
         MotionKind::LineStart => {
             state.preferred_col = None;
             state.cursor.col = 0;
         }
         MotionKind::FirstNonWhitespace => {
             state.preferred_col = None;
-            state.cursor.col = 0;
-            skip_whitespace(&state.lines, &mut state.cursor);
+            state.cursor.col = first_non_whitespace_col_or_last_blank(&state.lines, state.cursor.row);
         }
         MotionKind::LineEnd => {
             use crate::helper::max_col;
@@ -149,8 +148,7 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         MotionKind::LastRow => {
             state.preferred_col = None;
             state.cursor.row = state.lines.len().saturating_sub(1);
-            state.cursor.col = 0;
-            skip_whitespace(&state.lines, &mut state.cursor);
+            state.cursor.col = first_non_whitespace_col_or_last_blank(&state.lines, state.cursor.row);
         }
         MotionKind::Left => {
             use crate::actions::MoveBackward;
@@ -164,8 +162,62 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
     Some(())
 }
 
+fn first_non_whitespace_col_or_last_blank(lines: &crate::Lines, row: usize) -> usize {
+    let Some(line) = lines.iter_row().nth(row) else {
+        return 0;
+    };
+    line.iter()
+        .position(|ch| !ch.is_ascii_whitespace())
+        .unwrap_or_else(|| line.len().saturating_sub(1))
+}
+
+fn move_word_backward_once(state: &mut EditorState) {
+    state.preferred_col = None;
+    let Some(mut pos) = previous_big_word_scan_start(state) else {
+        return;
+    };
+    if state.lines.len_col(pos.row).unwrap_or_default() == 0 {
+        state.cursor = pos;
+        return;
+    }
+    if pos == Index2::new(0, 0) && state.lines.get(pos).is_some_and(|ch| ch.is_ascii_whitespace()) {
+        state.cursor = pos;
+        return;
+    }
+    pos = match previous_non_whitespace(state, pos) {
+        Some(pos) => pos,
+        None => return,
+    };
+    let Some(ch) = state.lines.get(pos) else {
+        return;
+    };
+    let class = CharacterClass::from(ch);
+    let mut start = pos;
+    while start.col > 0 {
+        let prev = Index2::new(start.row, start.col - 1);
+        let Some(prev_ch) = state.lines.get(prev) else {
+            break;
+        };
+        if prev_ch.is_ascii_whitespace() || CharacterClass::from(prev_ch) != class {
+            break;
+        }
+        start = prev;
+    }
+    state.cursor = start;
+}
+
 fn move_big_word_forward_once(state: &mut EditorState) {
     use crate::actions::{Execute, MoveBigWordForward};
+
+    if state.cursor.col == 0
+        && state.lines.iter_row().nth(state.cursor.row).is_some_and(|row| {
+            !row.is_empty() && row.iter().all(|ch| ch.is_ascii_whitespace())
+        })
+    {
+        state.preferred_col = None;
+        state.cursor.col = state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1);
+        return;
+    }
 
     let start_row = state.cursor.row;
     MoveBigWordForward(1).execute(state);
@@ -179,6 +231,95 @@ fn move_big_word_forward_once(state: &mut EditorState) {
             state.cursor.col = 0;
             return;
         }
+    }
+}
+
+fn move_big_word_backward_once(state: &mut EditorState) {
+    state.preferred_col = None;
+    let Some(pos) = big_word_backward_destination(state) else {
+        return;
+    };
+    state.cursor = pos;
+}
+
+fn big_word_backward_destination(state: &EditorState) -> Option<Index2> {
+    let row_count = state.lines.iter_row().count();
+    if row_count == 0 || state.cursor == Index2::new(0, 0) {
+        return None;
+    }
+
+    let mut pos = previous_big_word_scan_start(state)?;
+    loop {
+        if state.lines.len_col(pos.row).unwrap_or_default() == 0
+            || (pos == Index2::new(0, 0)
+                && state.lines.get(pos).is_some_and(|ch| ch.is_ascii_whitespace()))
+        {
+            return Some(pos);
+        }
+        pos = previous_non_whitespace(state, pos)?;
+        let mut start = pos;
+        while start.col > 0 {
+            let prev = Index2::new(start.row, start.col - 1);
+            if state.lines.get(prev).is_none_or(|ch| ch.is_ascii_whitespace()) {
+                break;
+            }
+            start = prev;
+        }
+        return Some(start);
+    }
+}
+
+fn previous_big_word_scan_start(state: &EditorState) -> Option<Index2> {
+    let row_len = state.lines.len_col(state.cursor.row).unwrap_or_default();
+    let before_cursor_is_whitespace = state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .is_some_and(|row| {
+            row.iter()
+                .take(state.cursor.col.min(row_len))
+                .all(|ch| ch.is_ascii_whitespace())
+        });
+    if state.cursor.col == 0 || before_cursor_is_whitespace {
+        if state.cursor.row == 0 {
+            return Some(Index2::new(0, 0));
+        }
+        return last_char_on_or_before_row(state, state.cursor.row - 1);
+    }
+    if state.cursor.col > 0 {
+        return Some(Index2::new(state.cursor.row, state.cursor.col - 1));
+    }
+    None
+}
+
+fn previous_non_whitespace(state: &EditorState, mut pos: Index2) -> Option<Index2> {
+    loop {
+        if let Some(ch) = state.lines.get(pos) {
+            if !ch.is_ascii_whitespace() {
+                return Some(pos);
+            }
+        }
+        pos = previous_index(state, pos)?;
+    }
+}
+
+fn previous_index(state: &EditorState, pos: Index2) -> Option<Index2> {
+    if pos.col > 0 {
+        return Some(Index2::new(pos.row, pos.col - 1));
+    }
+    if pos.row == 0 {
+        return None;
+    }
+    last_char_on_or_before_row(state, pos.row - 1)
+}
+
+fn last_char_on_or_before_row(state: &EditorState, row: usize) -> Option<Index2> {
+    loop {
+        let len = state.lines.len_col(row).unwrap_or_default();
+        if len > 0 {
+            return Some(Index2::new(row, len - 1));
+        }
+        return Some(Index2::new(row, 0));
     }
 }
 
