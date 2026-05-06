@@ -32,16 +32,29 @@ pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
         }
         return;
     };
-    if let Some(anchor) = state
-        .vim_undo_cursor_anchor
-        .filter(|anchor| anchor.row == state.cursor.row && anchor.col <= state.cursor.col)
-    {
+    if let Some(anchor) = state.vim_undo_cursor_anchor.filter(|anchor| {
+        anchor.row == state.cursor.row
+            && anchor.col <= state.cursor.col
+            && only_whitespace_between(state, *anchor, state.cursor)
+    }) {
         state.capture_with_cursor(anchor);
         apply_operator_without_capture(state, Operator::Delete, range);
         state.vim_undo_cursor_anchor = None;
     } else {
         apply_operator(state, Operator::Delete, range);
     }
+}
+
+fn only_whitespace_between(state: &EditorState, start: Index2, end: Index2) -> bool {
+    if start == end {
+        return true;
+    }
+    (start.col..end.col).all(|col| {
+        state
+            .lines
+            .get(Index2::new(start.row, col))
+            .is_none_or(|ch| ch.is_ascii_whitespace())
+    })
 }
 
 pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
@@ -83,13 +96,17 @@ pub(crate) fn paste_after(state: &mut EditorState) {
             rows.push(String::new());
         }
         let insert_at = (state.cursor.row + 1).min(rows.len());
+        let empty_buffer = !rows.iter().any(|row| !row.is_empty());
         let pasted_text = text.trim_start_matches('\n');
         let mut pasted_rows: Vec<String> = if pasted_text.is_empty() {
             vec![String::new()]
         } else {
             pasted_text.split('\n').map(str::to_string).collect()
         };
-        if pasted_text.len() > 1 && pasted_rows.last().is_some_and(|row| row.is_empty()) {
+        if !empty_buffer
+            && pasted_text.len() > 1
+            && pasted_rows.last().is_some_and(|row| row.is_empty())
+        {
             pasted_rows.pop();
         }
         rows.splice(insert_at..insert_at, pasted_rows);
@@ -98,6 +115,13 @@ pub(crate) fn paste_after(state: &mut EditorState) {
             state.lines.push(row.chars().collect::<Vec<_>>());
         }
         state.cursor.row = insert_at.min(state.lines.iter_row().count().saturating_sub(1));
+        state.cursor.col = 0;
+        return;
+    }
+
+    if !state.lines.iter_row().any(|row| !row.is_empty()) && text.contains('\n') {
+        state.lines = Lines::from(format!("\n{text}"));
+        state.cursor.row = 1.min(state.lines.iter_row().count().saturating_sub(1));
         state.cursor.col = 0;
         return;
     }
@@ -211,21 +235,24 @@ enum ShiftDirection {
 }
 
 fn shift_lines(state: &mut EditorState, range: TextRange, direction: ShiftDirection, capture: bool) {
-    if capture {
-        state.capture();
-    }
     let row_count = state.lines.iter_row().count();
     if row_count == 0 {
         return;
     }
     let start_row = range.start.row.min(row_count.saturating_sub(1));
     let end_row = range.end.row.min(row_count.saturating_sub(1));
+    if capture && shift_would_change(state, start_row, end_row, direction) {
+        state.capture_with_cursor(state.cursor);
+    }
     for row_index in start_row..=end_row {
         let Some(row) = state.lines.get_mut(RowIndex::new(row_index)) else {
             continue;
         };
         match direction {
             ShiftDirection::Right => {
+                if row.is_empty() {
+                    continue;
+                }
                 row.splice(0..0, [' ', ' ', ' ', ' ']);
             }
             ShiftDirection::Left => {
@@ -243,6 +270,23 @@ fn shift_lines(state: &mut EditorState, range: TextRange, direction: ShiftDirect
     state.cursor.row = start_row;
     place_cursor_after_shift(state);
     state.preferred_col = None;
+}
+
+fn shift_would_change(
+    state: &EditorState,
+    start_row: usize,
+    end_row: usize,
+    direction: ShiftDirection,
+) -> bool {
+    (start_row..=end_row).any(|row_index| {
+        let Some(row) = state.lines.get(RowIndex::new(row_index)) else {
+            return false;
+        };
+        match direction {
+            ShiftDirection::Right => !row.is_empty(),
+            ShiftDirection::Left => row.first() == Some(&'\t') || row.first() == Some(&' '),
+        }
+    })
 }
 
 fn place_cursor_after_shift(state: &mut EditorState) {

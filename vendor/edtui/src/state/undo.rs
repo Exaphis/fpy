@@ -137,6 +137,9 @@ fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
         };
         for (col_index, after_char) in after_row.iter().enumerate() {
             if before_row.get(col_index) != Some(after_char) {
+                if col_index > 0 && after_row[col_index..] == before_row[col_index - 1..] {
+                    return Some(Index2::new(row_index, col_index - 1));
+                }
                 return Some(Index2::new(row_index, col_index));
             }
         }

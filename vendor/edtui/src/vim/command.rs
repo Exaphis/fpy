@@ -380,14 +380,25 @@ impl VimCommandContext<'_> {
                 self.state.clear();
                 return true;
             } else if op == 'c'
-                && prefix == 'i'
+                && matches!(prefix, 'i' | 'a')
                 && editor.lines.len_col(editor.cursor.row).unwrap_or_default() == 0
             {
-                if !editor.lines.iter_row().any(|row| !row.is_empty()) {
-                    editor.lines = crate::Lines::from("");
-                    editor.cursor = crate::Index2::new(0, 0);
+                let should_enter_insert = prefix == 'i'
+                    && (!editor.lines.iter_row().any(|row| !row.is_empty())
+                        || editor
+                            .lines
+                            .len_col(editor.cursor.row + 1)
+                            .is_some_and(|len| len > 0));
+                if should_enter_insert {
+                    editor.capture_with_cursor(editor.cursor);
+                    if !editor.lines.iter_row().any(|row| !row.is_empty()) {
+                        editor.lines = crate::Lines::from("");
+                        editor.cursor = crate::Index2::new(0, 0);
+                    }
+                    editor.mode = EditorMode::Insert;
+                } else if prefix == 'a' && editor.lines.iter_row().any(|row| !row.is_empty()) {
+                    editor.capture_with_cursor(editor.cursor);
                 }
-                editor.mode = EditorMode::Insert;
                 self.lookup.clear();
                 self.state.clear();
                 return true;
