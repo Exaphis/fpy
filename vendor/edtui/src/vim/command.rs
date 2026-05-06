@@ -372,6 +372,18 @@ impl VimCommandContext<'_> {
             } else if let Some(range) = text_object_range(prefix, key_input, editor) {
                 if op == 'c' && matches!(prefix, 'i' | 'a') {
                     editor.capture_with_cursor(range.start);
+                    let redo_cursor = if range.start.row == range.end.row
+                        && range.start.col > 0
+                        && editor
+                            .lines
+                            .get(crate::Index2::new(range.start.row, range.start.col))
+                            .is_some_and(|ch| ch.is_ascii_whitespace())
+                    {
+                        crate::Index2::new(range.start.row, range.start.col - 1)
+                    } else {
+                        range.start
+                    };
+                    editor.set_redo_cursor_override(redo_cursor);
                     apply_operator_without_capture(op, editor, range);
                 } else {
                     apply_operator(op, editor, range);

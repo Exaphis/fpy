@@ -268,7 +268,7 @@ fn shift_lines(state: &mut EditorState, range: TextRange, direction: ShiftDirect
         }
     }
     state.cursor.row = start_row;
-    place_cursor_after_shift(state);
+    place_cursor_after_shift(state, direction);
     state.preferred_col = None;
 }
 
@@ -289,13 +289,18 @@ fn shift_would_change(
     })
 }
 
-fn place_cursor_after_shift(state: &mut EditorState) {
-    state.cursor.col = state
-        .lines
-        .iter_row()
-        .nth(state.cursor.row)
-        .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
-        .unwrap_or(0);
+fn place_cursor_after_shift(state: &mut EditorState, direction: ShiftDirection) {
+    let Some(row) = state.lines.iter_row().nth(state.cursor.row) else {
+        state.cursor.col = 0;
+        return;
+    };
+    let first_non_whitespace = row.iter().position(|ch| !ch.is_ascii_whitespace());
+    state.cursor.col = match direction {
+        ShiftDirection::Right if first_non_whitespace.is_none() && !row.is_empty() => {
+            row.len().saturating_sub(1)
+        }
+        _ => first_non_whitespace.unwrap_or(0),
+    };
 }
 
 fn yank_range(state: &mut EditorState, range: TextRange) {

@@ -47,6 +47,7 @@ impl Stack {
 pub(crate) struct UndoState {
     lines: Lines,
     cursor: Index2,
+    redo_cursor_override: Option<Index2>,
 }
 
 impl EditorState {
@@ -75,11 +76,18 @@ impl EditorState {
         let editor_state = UndoState {
             lines: self.lines.clone(),
             cursor,
+            redo_cursor_override: None,
         };
         self.undo.push(editor_state);
         self.redo = Stack::new();
         if self.undo_transaction_depth > 0 {
             self.undo_transaction_captured = true;
+        }
+    }
+
+    pub(crate) fn set_redo_cursor_override(&mut self, cursor: Index2) {
+        if let Some(prev) = self.undo.inner.last_mut() {
+            prev.redo_cursor_override = Some(cursor);
         }
     }
 
@@ -94,10 +102,14 @@ impl EditorState {
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             let current_lines = self.lines.clone();
-            let current_cursor = redo_cursor_for_state(&prev.lines, &current_lines).unwrap_or(self.cursor);
+            let current_cursor = prev
+                .redo_cursor_override
+                .or_else(|| redo_cursor_for_state(&prev.lines, &current_lines))
+                .unwrap_or(self.cursor);
             let current = UndoState {
                 lines: current_lines,
                 cursor: current_cursor,
+                redo_cursor_override: None,
             };
             self.lines = prev.lines;
             self.cursor = prev.cursor;
@@ -118,6 +130,7 @@ impl EditorState {
             let current = UndoState {
                 lines: self.lines.clone(),
                 cursor: self.cursor,
+                redo_cursor_override: None,
             };
             self.lines = prev.lines;
             self.cursor = prev.cursor;

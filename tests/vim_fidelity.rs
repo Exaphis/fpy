@@ -344,6 +344,20 @@ const STEP_CASES: &[StepCase] = &[
         initial: "a b c d e",
         steps: &["G", "Fa", "2sX<Esc>", "<C-r>", "dd", "sX<Esc>", "u"],
     },
+    StepCase {
+        name: "redo_cursor_after_caw_then_join_noop",
+        initial: "a b c d e",
+        steps: &[
+            "2sX<Esc>",
+            "2B",
+            "l",
+            "sX<Esc>",
+            "cawX<Esc>",
+            "u",
+            "<C-r>",
+            "J",
+        ],
+    },
 ];
 
 #[test]
