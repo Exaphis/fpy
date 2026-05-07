@@ -415,14 +415,14 @@ fn edtui_matches_real_neovim_for_golden_cases() {
 }
 
 #[test]
-#[ignore = "requires a real Neovim binary; run with FPY_NVIM=nvim FPY_VIM_FUZZ_ITERS=100 cargo test --test vim_fidelity -- --ignored"]
+#[ignore = "requires a real Neovim binary; run with FPY_NVIM=nvim FPY_VIM_FUZZ_ITERS=1000 cargo test --test vim_fidelity -- --ignored"]
 fn fuzz_supported_vim_normal_mode_sequences_against_real_neovim() {
     let nvim = nvim_binary();
     let mut oracle = NeovimOracle::start(&nvim);
     let iterations = std::env::var("FPY_VIM_FUZZ_ITERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(100);
+        .unwrap_or(1000);
     let mut rng = Lcg::new(
         std::env::var("FPY_VIM_FUZZ_SEED")
             .ok()
