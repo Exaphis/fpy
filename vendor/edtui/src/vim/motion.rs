@@ -141,13 +141,16 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         MotionKind::FirstRow => {
             state.preferred_col = None;
             state.cursor.row = 0;
-            state.cursor.col = 0;
-            skip_whitespace(&state.lines, &mut state.cursor);
+            state.cursor.col = state
+                .cursor
+                .col
+                .min(state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1));
         }
         MotionKind::LastRow => {
+            let col = state.preferred_col.unwrap_or(state.cursor.col);
             state.preferred_col = None;
             state.cursor.row = state.lines.len().saturating_sub(1);
-            state.cursor.col = first_non_whitespace_col_or_last_blank(&state.lines, state.cursor.row);
+            state.cursor.col = col.min(state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1));
         }
         MotionKind::Left => {
             use crate::actions::MoveBackward;

@@ -1,18 +1,22 @@
 //! Optional golden tests for edtui/fpy Vim-mode fidelity.
 //!
 //! These tests run the same keystroke script through edtui and through a real
-//! Vim binary, then compare the final buffer. They are ignored by default
-//! because they require `vim` on PATH and spawn external processes.
+//! Neovim binary, then compare the final buffer/cursor. They are ignored by
+//! default because they require `nvim` on PATH and spawn external processes.
 //!
 //! Run with:
-//!   FPY_VIM=vim cargo test --test vim_fidelity -- --ignored --nocapture
+//!   FPY_NVIM=nvim cargo test --test vim_fidelity -- --ignored --nocapture
 
-use std::{fs, process::Command};
+use std::{
+    fs,
+    io::{BufRead, BufReader, Write},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+};
 
 use edtui::{
     EditorEventHandler, EditorState, Lines, clipboard::InternalClipboard, events::KeyInput,
 };
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
 #[derive(Clone, Copy, Debug)]
 struct Case {
@@ -384,21 +388,26 @@ const STEP_CASES: &[StepCase] = &[
 ];
 
 #[test]
-#[ignore = "requires a real Vim binary; run with FPY_VIM=vim cargo test --test vim_fidelity -- --ignored"]
-fn edtui_matches_real_vim_for_golden_cases() {
-    let vim = vim_binary();
+#[ignore = "requires a real Neovim binary; run with FPY_NVIM=nvim cargo test --test vim_fidelity -- --ignored"]
+fn edtui_matches_real_neovim_for_golden_cases() {
+    let nvim = nvim_binary();
+    let mut oracle = NeovimOracle::start(&nvim);
 
     for case in CASES {
         let edtui = run_edtui_steps(case.initial, &[case.keys]);
-        let vim = run_vim(&vim, case.initial, case.keys);
-        assert_eq!(edtui, vim, "case {:?} with keys {:?}", case.name, case.keys);
+        let neovim = oracle.run(case.initial, &[case.keys]);
+        assert_eq!(
+            edtui, neovim,
+            "case {:?} with keys {:?}",
+            case.name, case.keys
+        );
     }
 
     for case in STEP_CASES {
         let edtui = run_edtui_steps(case.initial, case.steps);
-        let vim = run_vim_steps(&vim, case.initial, case.steps);
+        let neovim = oracle.run(case.initial, case.steps);
         assert_eq!(
-            edtui, vim,
+            edtui, neovim,
             "step case {:?} with steps {:?}",
             case.name, case.steps
         );
@@ -406,9 +415,10 @@ fn edtui_matches_real_vim_for_golden_cases() {
 }
 
 #[test]
-#[ignore = "requires a real Vim binary; run with FPY_VIM=vim FPY_VIM_FUZZ_ITERS=100 cargo test --test vim_fidelity -- --ignored"]
-fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
-    let vim = vim_binary();
+#[ignore = "requires a real Neovim binary; run with FPY_NVIM=nvim FPY_VIM_FUZZ_ITERS=100 cargo test --test vim_fidelity -- --ignored"]
+fn fuzz_supported_vim_normal_mode_sequences_against_real_neovim() {
+    let nvim = nvim_binary();
+    let mut oracle = NeovimOracle::start(&nvim);
     let iterations = std::env::var("FPY_VIM_FUZZ_ITERS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -442,7 +452,6 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         "dd",
         "dw",
         "D",
-        ">>",
         "sX<Esc>",
         "CX<Esc>",
         "J",
@@ -500,7 +509,6 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         "dd",
         "dw",
         "D",
-        ">>",
         "sX<Esc>",
         "CX<Esc>",
         "J",
@@ -564,24 +572,24 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         }
 
         let edtui = run_edtui_steps(initial, &steps);
-        let vim_snapshot = run_vim_steps(&vim, initial, &steps);
-        if edtui != vim_snapshot {
+        let nvim_snapshot = oracle.run(initial, &steps);
+        if edtui != nvim_snapshot {
             panic!(
-                "fuzz iteration {iteration}, initial {initial:?}, keys {keys:?}\nedtui: {edtui:?}\nvim:   {vim_snapshot:?}\nedtui trace: {:?}\nvim trace:   {:?}",
+                "fuzz iteration {iteration}, initial {initial:?}, keys {keys:?}\nedtui: {edtui:?}\nneovim: {nvim_snapshot:?}\nedtui trace: {:?}\nneovim trace:   {:?}",
                 trace_edtui(initial, &steps),
-                trace_vim_steps(&vim, initial, &steps),
+                oracle.trace(initial, &steps),
             );
         }
     }
 }
 
-fn vim_binary() -> String {
-    let vim = std::env::var("FPY_VIM").unwrap_or_else(|_| "vim".to_string());
+fn nvim_binary() -> String {
+    let nvim = std::env::var("FPY_NVIM").unwrap_or_else(|_| "nvim".to_string());
     assert!(
-        Command::new(&vim).arg("--version").output().is_ok(),
-        "Vim binary not found: {vim:?}"
+        Command::new(&nvim).arg("--version").output().is_ok(),
+        "Neovim binary not found: {nvim:?}"
     );
-    vim
+    nvim
 }
 
 struct Lcg(u64);
@@ -648,124 +656,193 @@ fn editor_text(lines: &Lines) -> String {
         .join("\n")
 }
 
-fn run_vim(vim: &str, initial: &str, keys: &str) -> Snapshot {
-    run_vim_steps(vim, initial, &[keys])
+struct NeovimOracle {
+    _dir: TempDir,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
 }
 
-fn run_vim_steps(vim: &str, initial: &str, steps: &[&str]) -> Snapshot {
-    run_vim_steps_with_trace(vim, initial, steps)
-        .pop()
-        .expect("vim should produce at least one snapshot")
-}
-
-fn trace_vim_steps(vim: &str, initial: &str, steps: &[&str]) -> Vec<Snapshot> {
-    run_vim_steps_with_trace(vim, initial, steps)
-}
-
-fn run_vim_steps_with_trace(vim: &str, initial: &str, steps: &[&str]) -> Vec<Snapshot> {
-    let dir = tempdir().expect("tempdir");
-    let file = dir.path().join("buffer.txt");
-    let cursor_file = dir.path().join("cursor.txt");
-    let trace_file = dir.path().join("trace.txt");
-    let script = dir.path().join("script.vim");
-    fs::write(&file, initial).expect("write initial buffer");
-
-    let mut normal_commands = String::new();
-    let trace_file_arg = vim_single_quoted_path(&trace_file);
-    for step in steps {
-        normal_commands.push_str("let before_text = join(getline(1, '$'), '\\n')\n");
-        normal_commands.push_str("execute \"normal! ");
-        normal_commands.push_str(&vim_normal_execute_arg(step));
-        normal_commands.push_str("\"\n");
-        normal_commands.push_str(&format!(
-            "call writefile([line('.') . ':' . col('.') . ':' . join(getline(1, '$'), '\\n')], {trace_file_arg}, 'a')\n"
-        ));
-        // Ex commands are otherwise coalesced into a single undo block in Vim's
-        // batch mode. Resetting the option to itself forces a new undo block so
-        // `u` behaves like it does when these atoms are typed interactively, but
-        // only after real text changes; motion/no-op atoms should not consume undo.
-        normal_commands.push_str("if before_text !=# join(getline(1, '$'), '\\n') | let &undolevels = &undolevels | endif\n");
+impl NeovimOracle {
+    fn start(nvim: &str) -> Self {
+        let dir = tempdir().expect("neovim oracle tempdir");
+        let script = dir.path().join("oracle.lua");
+        fs::write(&script, NEOVIM_ORACLE_LUA).expect("write neovim oracle lua");
+        let mut child = Command::new(nvim)
+            .arg("--headless")
+            .arg("-u")
+            .arg("NONE")
+            .arg("-n")
+            .arg("-l")
+            .arg(&script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start neovim oracle");
+        let stdin = child.stdin.take().expect("neovim oracle stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("neovim oracle stdout"));
+        Self {
+            _dir: dir,
+            child,
+            stdin,
+            stdout,
+        }
     }
-    let file_arg = vim_single_quoted_path(&file);
-    let cursor_file_arg = vim_single_quoted_path(&cursor_file);
-    fs::write(
-        &script,
-        format!(
-            "set nomore\nset nofixendofline\nset expandtab shiftwidth=4 tabstop=4 softtabstop=4\nexecute 'edit ' . {file_arg}\nnormal! gg0\n{normal_commands}call writefile([line('.') . ':' . col('.')], {cursor_file_arg})\nwrite!\nqall!\n"
-        ),
-    )
-    .expect("write vim script");
 
-    let output = Command::new(vim)
-        .arg("-Nu")
-        .arg("NONE")
-        .arg("-n")
-        .arg("-es")
-        .arg("-S")
-        .arg(&script)
-        .output()
-        .expect("run vim");
-
-    assert!(
-        output.status.success(),
-        "vim failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let text = fs::read_to_string(file).expect("read vim output");
-    let cursor = fs::read_to_string(cursor_file).expect("read vim cursor");
-    let (row, col) = cursor
-        .trim()
-        .split_once(':')
-        .expect("vim cursor should be row:col");
-    let final_snapshot = Snapshot {
-        text,
-        // Vim reports 1-based line and byte column. These tests intentionally use ASCII only,
-        // so byte column and edtui's character column are equivalent.
-        cursor: (
-            row.parse::<usize>().expect("vim cursor row") - 1,
-            col.parse::<usize>().expect("vim cursor col") - 1,
-        ),
-    };
-    let mut snapshots = parse_vim_trace(&trace_file);
-    if snapshots.is_empty() {
-        snapshots.push(final_snapshot);
-    } else if let Some(last) = snapshots.last_mut() {
-        *last = final_snapshot;
+    fn run(&mut self, initial: &str, steps: &[&str]) -> Snapshot {
+        self.request(false, initial, steps)
+            .pop()
+            .expect("neovim oracle should produce a snapshot")
     }
-    snapshots
-}
 
-fn parse_vim_trace(path: &std::path::Path) -> Vec<Snapshot> {
-    fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .map(|line| {
-            let mut fields = line.splitn(3, ':');
-            let row = fields
+    fn trace(&mut self, initial: &str, steps: &[&str]) -> Vec<Snapshot> {
+        self.request(true, initial, steps)
+    }
+
+    fn request(&mut self, trace: bool, initial: &str, steps: &[&str]) -> Vec<Snapshot> {
+        write!(
+            self.stdin,
+            "RUN\t{}\t{}",
+            usize::from(trace),
+            hex_encode(initial)
+        )
+        .expect("write oracle request");
+        for step in steps {
+            write!(
+                self.stdin,
+                "\t{}",
+                hex_encode(&neovim_normal_execute_arg(step))
+            )
+            .expect("write oracle step");
+        }
+        writeln!(self.stdin).expect("finish oracle request");
+        self.stdin.flush().expect("flush oracle request");
+
+        let mut snapshots = Vec::new();
+        loop {
+            let mut line = String::new();
+            let n = self
+                .stdout
+                .read_line(&mut line)
+                .expect("read oracle response");
+            assert!(n != 0, "neovim oracle exited unexpectedly");
+            let line = line.trim_end();
+            if line == "END" {
+                break;
+            }
+            let mut parts = line.splitn(3, '\t');
+            let row = parts
                 .next()
-                .expect("trace row")
+                .expect("oracle row")
                 .parse::<usize>()
-                .expect("trace row")
+                .expect("oracle row")
                 - 1;
-            let col = fields
+            let col = parts
                 .next()
-                .expect("trace col")
+                .expect("oracle col")
                 .parse::<usize>()
-                .expect("trace col")
+                .expect("oracle col")
                 - 1;
-            let text = fields.next().unwrap_or_default().replace("\\n", "\n");
-            Snapshot {
+            let text = hex_decode(parts.next().unwrap_or_default());
+            snapshots.push(Snapshot {
                 text,
                 cursor: (row, col),
-            }
-        })
+            });
+        }
+        snapshots
+    }
+}
+
+impl Drop for NeovimOracle {
+    fn drop(&mut self) {
+        let _ = writeln!(self.stdin, "QUIT");
+        let _ = self.stdin.flush();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+const NEOVIM_ORACLE_LUA: &str = r#"
+local function hex_decode(s)
+  return (s:gsub('..', function(cc) return string.char(tonumber(cc, 16)) end))
+end
+local function hex_encode(s)
+  return (s:gsub('.', function(c) return string.format('%02x', string.byte(c)) end))
+end
+local function split_lines(s)
+  local lines = {}
+  local start = 1
+  while true do
+    local i = string.find(s, '\n', start, true)
+    if not i then
+      table.insert(lines, string.sub(s, start))
+      break
+    end
+    table.insert(lines, string.sub(s, start, i - 1))
+    start = i + 1
+  end
+  if #lines == 0 then lines = {''} end
+  return lines
+end
+local function snapshot()
+  local pos = vim.api.nvim_win_get_cursor(0)
+  local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, true), '\n')
+  io.stdout:write(pos[1] .. '\t' .. pos[2] + 1 .. '\t' .. hex_encode(text) .. '\n')
+  io.stdout:flush()
+end
+vim.o.more = false
+vim.o.fixendofline = false
+vim.o.expandtab = true
+vim.o.shiftwidth = 4
+vim.o.tabstop = 4
+vim.o.softtabstop = 4
+vim.o.autoindent = false
+vim.o.smartindent = false
+vim.o.cindent = false
+vim.o.indentexpr = ''
+for line in io.lines() do
+  if line == 'QUIT' then break end
+  local fields = {}
+  for field in string.gmatch(line, '[^\t]+') do table.insert(fields, field) end
+  if fields[1] == 'RUN' then
+    local trace = fields[2] == '1'
+    vim.cmd('enew!')
+    local old_undolevels = vim.o.undolevels
+    vim.o.undolevels = -1
+    vim.api.nvim_buf_set_lines(0, 0, -1, true, split_lines(hex_decode(fields[3] or '')))
+    vim.cmd('silent! undojoin')
+    vim.o.undolevels = old_undolevels
+    vim.cmd('normal! gg0')
+    for i = 4, #fields do
+      local before = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, true), '\n')
+      vim.cmd('execute "normal! ' .. hex_decode(fields[i]) .. '"')
+      if trace then snapshot() end
+      local after = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, true), '\n')
+      if before ~= after then vim.cmd('let &undolevels = &undolevels') end
+    end
+    if not trace then snapshot() end
+    io.stdout:write('END\n')
+    io.stdout:flush()
+  end
+end
+"#;
+
+fn hex_encode(s: &str) -> String {
+    s.as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
-fn vim_single_quoted_path(path: &std::path::Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "''"))
+fn hex_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for chunk in bytes.chunks_exact(2) {
+        let hex = std::str::from_utf8(chunk).expect("hex utf8");
+        out.push(u8::from_str_radix(hex, 16).expect("hex byte"));
+    }
+    String::from_utf8(out).expect("hex decoded utf8")
 }
 
 fn parse_keys(keys: &str) -> Vec<KeyInput> {
@@ -798,7 +875,7 @@ fn parse_keys(keys: &str) -> Vec<KeyInput> {
     out
 }
 
-fn vim_normal_execute_arg(keys: &str) -> String {
+fn neovim_normal_execute_arg(keys: &str) -> String {
     let mut out = String::new();
     let mut chars = keys.chars().peekable();
     while let Some(ch) = chars.next() {

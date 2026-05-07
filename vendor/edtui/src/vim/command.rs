@@ -1,6 +1,5 @@
 use crate::{
     events::key::input::{self, KeyInput},
-    helper::skip_whitespace,
     state::selection::set_selection_with_lines,
     EditorMode, EditorState,
 };
@@ -567,8 +566,6 @@ fn delimiter_text_object_range(prefix: char, ch: char, editor: &EditorState) -> 
 
 fn move_to_row(editor: &mut EditorState, target_row: usize) {
     editor.cursor.row = target_row.min(editor.lines.len().saturating_sub(1));
-    editor.cursor.col = 0;
-    skip_whitespace(&editor.lines, &mut editor.cursor);
     editor.clamp_column();
     if editor.mode == EditorMode::Visual {
         set_selection_with_lines(&mut editor.selection, editor.cursor, &editor.lines);

@@ -268,7 +268,7 @@ fn shift_lines(state: &mut EditorState, range: TextRange, direction: ShiftDirect
         }
     }
     state.cursor.row = start_row;
-    place_cursor_after_shift(state, direction);
+    clamp_cursor(state);
     state.preferred_col = None;
 }
 
@@ -287,20 +287,6 @@ fn shift_would_change(
             ShiftDirection::Left => row.first() == Some(&'\t') || row.first() == Some(&' '),
         }
     })
-}
-
-fn place_cursor_after_shift(state: &mut EditorState, direction: ShiftDirection) {
-    let Some(row) = state.lines.iter_row().nth(state.cursor.row) else {
-        state.cursor.col = 0;
-        return;
-    };
-    let first_non_whitespace = row.iter().position(|ch| !ch.is_ascii_whitespace());
-    state.cursor.col = match direction {
-        ShiftDirection::Right if first_non_whitespace.is_none() && !row.is_empty() => {
-            row.len().saturating_sub(1)
-        }
-        _ => first_non_whitespace.unwrap_or(0),
-    };
 }
 
 fn yank_range(state: &mut EditorState, range: TextRange) {
@@ -330,45 +316,31 @@ fn apply_linewise_edit(
     if capture {
         capture_linewise_undo_state(state, range);
     }
+    let cursor_col_before_delete = if state.mode == EditorMode::Visual {
+        0
+    } else {
+        state.cursor.col
+    };
     let _ = extract_linewise(state, range.start.row, range.end.row);
     state.clip.set_text(yanked_text);
     state.vim_last_yank_linewise = true;
-    place_cursor_after_linewise_edit(state, range.start.row);
+    place_cursor_after_linewise_edit(state, range.start.row, cursor_col_before_delete);
     if operator == Operator::Change {
         state.mode = EditorMode::Insert;
     }
 }
 
-fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
-    let mut undo_cursor = state.cursor;
-    if range.start.row == range.end.row
-        || (range.start.row == 0 && range.end.row >= state.lines.iter_row().count().saturating_sub(1))
-    {
-        let first_non_whitespace = state
-            .lines
-            .iter_row()
-            .nth(state.cursor.row)
-            .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
-            .unwrap_or(0);
-        undo_cursor.col = if first_non_whitespace == 0 && state.lines.iter_row().count() == 1 {
-            0
-        } else if first_non_whitespace == 0 {
-            state.cursor.col
-        } else {
-            first_non_whitespace.min(state.cursor.col)
-        };
-    }
-    state.capture_with_cursor(undo_cursor);
+fn capture_linewise_undo_state(state: &mut EditorState, _range: TextRange) {
+    state.capture_with_cursor(state.cursor);
 }
 
-fn place_cursor_after_linewise_edit(state: &mut EditorState, deleted_start_row: usize) {
+fn place_cursor_after_linewise_edit(
+    state: &mut EditorState,
+    deleted_start_row: usize,
+    cursor_col_before_delete: usize,
+) {
     state.cursor.row = deleted_start_row.min(state.lines.len().saturating_sub(1));
-    state.cursor.col = state
-        .lines
-        .iter_row()
-        .nth(state.cursor.row)
-        .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
-        .unwrap_or(0);
+    state.cursor.col = cursor_col_before_delete;
     clamp_cursor(state);
 }
 
