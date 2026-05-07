@@ -177,12 +177,26 @@ fn move_word_end_once(state: &mut EditorState) {
     use crate::actions::{Execute, MoveWordForwardToEndOfWord};
 
     if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
-        move_to_next_nonempty_word_end(state);
+        if state.cursor.row > 0 && state.lines.len_col(state.cursor.row - 1).unwrap_or_default() <= 1 {
+            move_to_next_nonempty_word_end(state);
+        } else {
+            move_to_next_nonempty_line_start(state);
+        }
         return;
     }
 
     let before = state.cursor;
     MoveWordForwardToEndOfWord(1).execute(state);
+    if before.col == 0
+        && state.cursor.row > before.row
+        && state
+            .lines
+            .iter_row()
+            .nth(before.row)
+            .is_some_and(|row| row.is_empty() || row.iter().all(|ch| ch.is_ascii_whitespace()))
+    {
+        state.cursor.col = 0;
+    }
     if state.cursor != before || before.row + 1 >= state.lines.iter_row().count() {
         return;
     }
@@ -192,6 +206,12 @@ fn move_word_end_once(state: &mut EditorState) {
 fn move_to_next_nonempty_word_end(state: &mut EditorState) {
     use crate::actions::{Execute, MoveWordForwardToEndOfWord};
 
+    if move_to_next_nonempty_line_start(state) {
+        MoveWordForwardToEndOfWord(1).execute(state);
+    }
+}
+
+fn move_to_next_nonempty_line_start(state: &mut EditorState) -> bool {
     let mut row = state.cursor.row + 1;
     while row < state.lines.iter_row().count()
         && state.lines.len_col(row).unwrap_or_default() == 0
@@ -202,10 +222,10 @@ fn move_to_next_nonempty_word_end(state: &mut EditorState) {
         if state.cursor.row + 1 < state.lines.iter_row().count() {
             state.cursor = Index2::new(state.cursor.row + 1, 0);
         }
-        return;
+        return false;
     }
     state.cursor = Index2::new(row, 0);
-    MoveWordForwardToEndOfWord(1).execute(state);
+    true
 }
 
 fn move_word_backward_once(state: &mut EditorState) {
