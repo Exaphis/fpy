@@ -17,7 +17,7 @@ use crossterm::{
     terminal::{EnableLineWrap, disable_raw_mode, enable_raw_mode},
 };
 use edtui::{
-    EditorEventHandler, EditorMode, EditorState, EditorView,
+    EditorEventHandler, EditorMode, EditorState, EditorView, Index2,
     actions::{Chainable, InsertChar, LineBreak, SwitchMode},
     syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet},
 };
@@ -54,6 +54,7 @@ use self::{
     transcript::{highlighted_execute_input, runtime_line},
 };
 use crate::custom_terminal::{CursorStyle, DefaultTerminal};
+use crate::extensions::{ExtensionContext, ExtensionManager, ExtensionOutcome};
 use crate::history::{HistoryEntry, HistoryOutcome};
 use crate::insert_history::insert_history_text;
 use crate::kernel::KernelStatus;
@@ -109,6 +110,7 @@ struct EditorController {
     history: Vec<String>,
     history_index: Option<usize>,
     pending_stdin: Option<PendingStdin>,
+    extensions: ExtensionManager,
 }
 
 impl EditorController {
@@ -119,6 +121,7 @@ impl EditorController {
             history: Vec::new(),
             history_index: None,
             pending_stdin: None,
+            extensions: ExtensionManager::with_defaults(),
         }
     }
 
@@ -185,6 +188,33 @@ impl EditorController {
         let text = self.editor.lines.to_string();
         self.reset();
         text
+    }
+
+    fn cursor_byte(&self) -> usize {
+        let text = self.editor.lines.to_string();
+        cursor_to_byte(&text, self.editor.cursor)
+    }
+
+    fn set_text_and_cursor_byte(&mut self, text: &str, cursor_byte: usize) {
+        self.set_text(text);
+        self.editor.cursor = byte_to_cursor(text, cursor_byte);
+    }
+
+    fn handle_extension_key(&mut self, key: KeyEvent) -> bool {
+        let cell = self.editor.lines.to_string();
+        match self.extensions.on_key(
+            key,
+            ExtensionContext {
+                cell: &cell,
+                cursor_byte: self.cursor_byte(),
+            },
+        ) {
+            ExtensionOutcome::Ignored => false,
+            ExtensionOutcome::ReplaceCell(edit) => {
+                self.set_text_and_cursor_byte(&edit.text, edit.cursor_byte);
+                true
+            }
+        }
     }
 
     fn history_up(&mut self) {
@@ -256,6 +286,40 @@ impl EditorController {
         self.editor
             .execute(SwitchMode(EditorMode::Insert).chain(LineBreak(1)));
     }
+}
+
+fn cursor_to_byte(text: &str, cursor: Index2) -> usize {
+    let mut byte = 0;
+    for (row, line) in text.split('\n').enumerate() {
+        if row == cursor.row {
+            return byte
+                + line
+                    .char_indices()
+                    .nth(cursor.col)
+                    .map_or(line.len(), |(index, _)| index);
+        }
+        byte += line.len() + 1;
+    }
+    text.len()
+}
+
+fn byte_to_cursor(text: &str, byte: usize) -> Index2 {
+    let target = byte.min(text.len());
+    let mut offset = 0;
+    for (row, line) in text.split('\n').enumerate() {
+        let line_end = offset + line.len();
+        if target <= line_end {
+            let col = line[..target.saturating_sub(offset)].chars().count();
+            return Index2::new(row, col);
+        }
+        offset = line_end + 1;
+    }
+    let row = text.split('\n').count().saturating_sub(1);
+    let col = text
+        .rsplit('\n')
+        .next()
+        .map_or(0, |line| line.chars().count());
+    Index2::new(row, col)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -952,7 +1016,9 @@ impl AppUi {
                 None
             }
             key if self.editor_enabled() => {
-                self.editor.on_key(key);
+                if !self.editor.handle_extension_key(key) {
+                    self.editor.on_key(key);
+                }
                 None
             }
             _ => None,
