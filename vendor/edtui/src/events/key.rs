@@ -808,8 +808,17 @@ impl KeyEventHandler {
                 apply_count(&mut action, count, key_input, mode, state);
             }
             if matches!(mode, EditorMode::Normal | EditorMode::Visual) {
+                let cursor_before_action = state.cursor;
+                if mode == EditorMode::Normal
+                    && matches!(key_input.key, input::KeyCode::Char('I'))
+                    && key_input.modifiers == input::Modifiers::SHIFT
+                    && state.vim_undo_cursor_anchor.is_some()
+                {
+                    state.vim_insert_capture_cursor_override = Some(cursor_before_action);
+                }
                 let entering_insert = VimCommandExecutor::execute_normal_action(&mut action, state);
                 if entering_insert {
+                    state.vim_after_redo = false;
                     state.vim_undo_cursor_anchor = None;
                     self.vim_insert_session_active = true;
                 }

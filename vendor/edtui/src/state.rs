@@ -61,6 +61,10 @@ pub struct EditorState {
     /// Cursor position of the most recent completed Vim edit, used by Vim undo.
     pub(crate) vim_undo_cursor_anchor: Option<Index2>,
 
+    pub(crate) vim_insert_capture_cursor_override: Option<Index2>,
+
+    pub(crate) vim_after_redo: bool,
+
     /// Nesting depth for undo captures coalesced into a single transaction.
     pub(crate) undo_transaction_depth: usize,
 
@@ -110,6 +114,8 @@ impl EditorState {
             preferred_col: None,
             vim_last_yank_linewise: false,
             vim_undo_cursor_anchor: None,
+            vim_insert_capture_cursor_override: None,
+            vim_after_redo: false,
             undo_transaction_depth: 0,
             undo_transaction_captured: false,
             #[cfg(feature = "system-editor")]

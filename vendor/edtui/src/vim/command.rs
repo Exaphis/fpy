@@ -63,8 +63,14 @@ impl VimCommandContext<'_> {
 
     fn handle_undo_redo_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
         match (key_input.key, key_input.modifiers) {
-            (input::KeyCode::Char('u'), input::Modifiers::NONE) => editor.undo(),
-            (input::KeyCode::Char('r'), input::Modifiers::CONTROL) => editor.redo(),
+            (input::KeyCode::Char('u'), input::Modifiers::NONE) => {
+                editor.undo();
+                editor.vim_after_redo = false;
+            }
+            (input::KeyCode::Char('r'), input::Modifiers::CONTROL) => {
+                editor.redo();
+                editor.vim_after_redo = true;
+            }
             _ => return false,
         }
         self.lookup.clear();

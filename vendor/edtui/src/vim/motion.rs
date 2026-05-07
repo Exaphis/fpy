@@ -114,12 +114,11 @@ pub(crate) fn motion_effect(
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
     use crate::actions::{
         Execute, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp, MoveWordForward,
-        MoveWordForwardToEndOfWord,
     };
 
     match motion {
         MotionKind::WordForward => MoveWordForward(1).execute(state),
-        MotionKind::WordEnd => MoveWordForwardToEndOfWord(1).execute(state),
+        MotionKind::WordEnd => move_word_end_once(state),
         MotionKind::WordBackward => move_word_backward_once(state),
         MotionKind::BigWordForward => move_big_word_forward_once(state),
         MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
@@ -169,6 +168,41 @@ fn first_non_whitespace_col_or_last_blank(lines: &crate::Lines, row: usize) -> u
     line.iter()
         .position(|ch| !ch.is_ascii_whitespace())
         .unwrap_or_else(|| line.len().saturating_sub(1))
+}
+
+fn move_word_end_once(state: &mut EditorState) {
+    use crate::actions::{Execute, MoveWordForwardToEndOfWord};
+
+    if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
+        move_to_next_nonempty_word_end(state);
+        return;
+    }
+
+    let before = state.cursor;
+    MoveWordForwardToEndOfWord(1).execute(state);
+    if state.cursor != before || before.row + 1 >= state.lines.iter_row().count() {
+        return;
+    }
+    move_to_next_nonempty_word_end(state);
+}
+
+fn move_to_next_nonempty_word_end(state: &mut EditorState) {
+    use crate::actions::{Execute, MoveWordForwardToEndOfWord};
+
+    let mut row = state.cursor.row + 1;
+    while row < state.lines.iter_row().count()
+        && state.lines.len_col(row).unwrap_or_default() == 0
+    {
+        row += 1;
+    }
+    if row >= state.lines.iter_row().count() {
+        if state.cursor.row + 1 < state.lines.iter_row().count() {
+            state.cursor = Index2::new(state.cursor.row + 1, 0);
+        }
+        return;
+    }
+    state.cursor = Index2::new(row, 0);
+    MoveWordForwardToEndOfWord(1).execute(state);
 }
 
 fn move_word_backward_once(state: &mut EditorState) {

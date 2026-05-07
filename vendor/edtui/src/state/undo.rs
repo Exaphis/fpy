@@ -66,7 +66,11 @@ impl EditorState {
     }
 
     pub(crate) fn capture(&mut self) {
-        self.capture_with_cursor(self.cursor);
+        let cursor = self
+            .vim_insert_capture_cursor_override
+            .take()
+            .unwrap_or(self.cursor);
+        self.capture_with_cursor(cursor);
     }
 
     pub(crate) fn capture_with_cursor(&mut self, cursor: Index2) {
@@ -106,21 +110,14 @@ impl EditorState {
                 .redo_cursor_override
                 .or_else(|| redo_cursor_for_state(&prev.lines, &current_lines))
                 .unwrap_or(self.cursor);
+            let changed_cursor = redo_cursor_for_state(&current_lines, &prev.lines).unwrap_or(prev.cursor);
             let current = UndoState {
                 lines: current_lines,
                 cursor: current_cursor,
                 redo_cursor_override: None,
             };
             self.lines = prev.lines;
-            self.cursor = prev.cursor;
-            self.cursor.row = self
-                .cursor
-                .row
-                .min(self.lines.iter_row().count().saturating_sub(1));
-            self.cursor.col = self
-                .cursor
-                .col
-                .min(self.lines.len_col(self.cursor.row).unwrap_or_default().saturating_sub(1));
+            self.cursor = vim_undoredo_cursor(prev.cursor, changed_cursor, &self.lines);
             self.redo.push(current);
         }
     }
@@ -132,17 +129,40 @@ impl EditorState {
                 cursor: self.cursor,
                 redo_cursor_override: None,
             };
+            let changed_cursor = redo_cursor_for_state(&self.lines, &prev.lines).unwrap_or(prev.cursor);
             self.lines = prev.lines;
-            self.cursor = prev.cursor;
+            self.cursor = vim_undoredo_cursor(prev.cursor, changed_cursor, &self.lines);
             self.undo.push(current);
         }
     }
 }
 
-fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
-    if after.iter_row().count() < before.iter_row().count() {
-        return Some(Index2::new(0, 0));
+fn vim_undoredo_cursor(saved_cursor: Index2, changed_cursor: Index2, lines: &Lines) -> Index2 {
+    let mut cursor = changed_cursor;
+    if saved_cursor.row + 1 == cursor.row && cursor.row > 0 {
+        cursor.row -= 1;
     }
+    let row_count = lines.iter_row().count();
+    if row_count == 0 {
+        return Index2::new(0, 0);
+    }
+    cursor.row = cursor.row.min(row_count.saturating_sub(1));
+    if saved_cursor.row == cursor.row {
+        cursor.col = saved_cursor.col;
+    } else {
+        cursor.col = lines
+            .iter_row()
+            .nth(cursor.row)
+            .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+            .unwrap_or(0);
+    }
+    cursor.col = cursor
+        .col
+        .min(lines.len_col(cursor.row).unwrap_or_default().saturating_sub(1));
+    cursor
+}
+
+fn redo_cursor_for_state(before: &Lines, after: &Lines) -> Option<Index2> {
     let before_rows: Vec<Vec<char>> = before.iter_row().map(|row| row.to_vec()).collect();
     for (row_index, after_row) in after.iter_row().enumerate() {
         let Some(before_row) = before_rows.get(row_index) else {

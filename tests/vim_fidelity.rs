@@ -358,6 +358,29 @@ const STEP_CASES: &[StepCase] = &[
             "J",
         ],
     },
+    StepCase {
+        name: "undo_insert_at_start_after_change_restores_cursor",
+        initial: "one two three",
+        steps: &[
+            "aX<Esc>", "W", "E", "E", "diw", "AX<Esc>", "2W", "CX<Esc>", "IX<Esc>", "u",
+        ],
+    },
+    StepCase {
+        name: "undo_insert_at_start_after_redo_restores_cursor",
+        initial: "one two three",
+        steps: &[
+            "cawX<Esc>",
+            "AX<Esc>",
+            "u",
+            "IX<Esc>",
+            "l",
+            "2w",
+            "<C-r>",
+            "fa",
+            "B",
+            "u",
+        ],
+    },
 ];
 
 #[test]
@@ -419,6 +442,7 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         "dd",
         "dw",
         "D",
+        ">>",
         "sX<Esc>",
         "CX<Esc>",
         "J",
@@ -476,6 +500,7 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_vim() {
         "dd",
         "dw",
         "D",
+        ">>",
         "sX<Esc>",
         "CX<Esc>",
         "J",
