@@ -812,9 +812,21 @@ impl KeyEventHandler {
                 if mode == EditorMode::Normal
                     && matches!(key_input.key, input::KeyCode::Char('I'))
                     && key_input.modifiers == input::Modifiers::SHIFT
-                    && state.vim_undo_cursor_anchor.is_some()
                 {
-                    state.vim_insert_capture_cursor_override = Some(cursor_before_action);
+                    let col = if state.vim_undo_cursor_anchor.is_some() {
+                        cursor_before_action.col
+                    } else {
+                        state
+                            .lines
+                            .iter_row()
+                            .nth(cursor_before_action.row)
+                            .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
+                            .unwrap_or(0)
+                    };
+                    state.vim_insert_capture_cursor_override = Some(crate::Index2::new(
+                        cursor_before_action.row,
+                        col,
+                    ));
                 }
                 let entering_insert = VimCommandExecutor::execute_normal_action(&mut action, state);
                 if entering_insert {

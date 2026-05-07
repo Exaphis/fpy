@@ -26,6 +26,7 @@ pub(crate) fn apply_operator_without_capture(
 }
 
 pub(crate) fn delete_char(state: &mut EditorState, count: usize) {
+    state.preferred_col = None;
     let Some(range) = super::motion::char_span_range(state, count) else {
         if state.lines.iter_row().any(|row| !row.is_empty()) || !state.vim_last_yank_linewise {
             state.capture();
@@ -58,6 +59,7 @@ fn only_whitespace_between(state: &EditorState, start: Index2, end: Index2) -> b
 }
 
 pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
+    state.preferred_col = None;
     let Some(range) = super::motion::line_end_range(state) else {
         return;
     };
@@ -68,6 +70,7 @@ pub(crate) fn delete_to_end_of_line(state: &mut EditorState) {
 }
 
 pub(crate) fn change_to_end_of_line(state: &mut EditorState) {
+    state.vim_linewise_delete_after_substitute = false;
     let Some(range) = super::motion::line_end_range(state) else {
         state.mode = EditorMode::Insert;
         return;
@@ -159,14 +162,19 @@ pub(crate) fn join_line_with_line_below(state: &mut EditorState) {
     state.capture();
 
     let row = state.cursor.row;
-    let left_had_trailing_whitespace = rows[row]
+    let raw_left = rows[row].clone();
+    let left_had_trailing_whitespace = raw_left
         .chars()
         .last()
         .is_some_and(|ch| ch.is_ascii_whitespace());
-    let left = rows[row].trim_end().to_string();
     let right = rows.remove(row + 1).trim_start().to_string();
+    let left = if left_had_trailing_whitespace {
+        raw_left
+    } else {
+        raw_left.trim_end().to_string()
+    };
     let join_col = left.chars().count();
-    let joined_with_space = !left.is_empty() && !right.is_empty();
+    let joined_with_space = !left.is_empty() && !right.is_empty() && !left_had_trailing_whitespace;
     rows[row] = if joined_with_space {
         format!("{left} {right}")
     } else {
@@ -200,6 +208,9 @@ fn apply_operator_with_capture(
             apply_linewise_edit(state, operator, range, capture);
         }
         Operator::Delete | Operator::Change => {
+            if operator == Operator::Change {
+                state.vim_linewise_delete_after_substitute = false;
+            }
             if capture {
                 let undo_cursor = if operator == Operator::Delete {
                     range.start
@@ -318,9 +329,37 @@ fn apply_linewise_edit(
     }
     let cursor_col_before_delete = if state.mode == EditorMode::Visual {
         0
+    } else if !state.vim_linewise_delete_after_substitute
+        && range.start.row == state.lines.len().saturating_sub(1)
+        && range.start.row == range.end.row
+        && state.lines.len_col(range.start.row).unwrap_or_default() <= 1
+        && range.start.row > 1
+        && state
+            .lines
+            .iter_row()
+            .nth(range.start.row - 1)
+            .is_some_and(|row| row.iter().all(|ch| !ch.is_ascii_whitespace()))
+    {
+        state
+            .lines
+            .len_col(range.start.row - 1)
+            .unwrap_or_default()
+            .saturating_sub(1)
+    } else if state.vim_linewise_delete_after_substitute
+        && range.start.row == 0
+        && range.start.row == range.end.row
+        && state.lines.len_col(range.start.row).unwrap_or_default() == 1
+        && range.start.row + 1 < state.lines.len()
+    {
+        state
+            .lines
+            .len_col(range.start.row + 1)
+            .unwrap_or_default()
+            .saturating_sub(1)
     } else {
-        state.cursor.col
+        state.preferred_col.unwrap_or(state.cursor.col)
     };
+    state.vim_linewise_delete_after_substitute = false;
     let _ = extract_linewise(state, range.start.row, range.end.row);
     state.clip.set_text(yanked_text);
     state.vim_last_yank_linewise = true;

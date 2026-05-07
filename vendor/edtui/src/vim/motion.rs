@@ -105,10 +105,30 @@ pub(crate) fn motion_effect(
     count: usize,
 ) -> Option<(Index2, Option<usize>)> {
     let mut scratch = state.clone();
-    for _ in 0..count.max(1) {
+    let iterations = if motion == MotionKind::WordEnd
+        && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
+        && next_nonempty_line_len(state) == Some(1)
+    {
+        1
+    } else {
+        count.max(1)
+    };
+    for _ in 0..iterations {
         apply_motion_once(&mut scratch, motion)?;
     }
     Some((scratch.cursor, scratch.preferred_col))
+}
+
+fn next_nonempty_line_len(state: &EditorState) -> Option<usize> {
+    let mut row = state.cursor.row + 1;
+    while row < state.lines.iter_row().count() {
+        let len = state.lines.len_col(row).unwrap_or_default();
+        if len > 0 {
+            return Some(len);
+        }
+        row += 1;
+    }
+    None
 }
 
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
@@ -139,16 +159,14 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         MotionKind::Up => MoveUp(1).execute(state),
         MotionKind::Down => MoveDown(1).execute(state),
         MotionKind::FirstRow => {
-            state.preferred_col = None;
+            let col = state.preferred_col.unwrap_or(state.cursor.col);
+            state.preferred_col = Some(col);
             state.cursor.row = 0;
-            state.cursor.col = state
-                .cursor
-                .col
-                .min(state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1));
+            state.cursor.col = col.min(state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1));
         }
         MotionKind::LastRow => {
             let col = state.preferred_col.unwrap_or(state.cursor.col);
-            state.preferred_col = None;
+            state.preferred_col = Some(col);
             state.cursor.row = state.lines.len().saturating_sub(1);
             state.cursor.col = col.min(state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1));
         }
@@ -177,7 +195,13 @@ fn move_word_end_once(state: &mut EditorState) {
     use crate::actions::{Execute, MoveWordForwardToEndOfWord};
 
     if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
-        if state.cursor.row > 0 && state.lines.len_col(state.cursor.row - 1).unwrap_or_default() <= 1 {
+        if state.cursor.row == 0
+            || (state.cursor.row > 0 && state.lines.len_col(state.cursor.row - 1).unwrap_or_default() <= 1)
+            || state
+                .lines
+                .get(Index2::new(state.cursor.row + 1, 0))
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+        {
             move_to_next_nonempty_word_end(state);
         } else {
             move_to_next_nonempty_line_start(state);
@@ -197,6 +221,13 @@ fn move_word_end_once(state: &mut EditorState) {
     {
         state.cursor.col = 0;
     }
+    if state.cursor.row > before.row
+        && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
+        && state.lines.len_col(before.row).unwrap_or_default() > 0
+    {
+        move_to_next_nonempty_word_end(state);
+        return;
+    }
     if state.cursor != before || before.row + 1 >= state.lines.iter_row().count() {
         return;
     }
@@ -214,7 +245,9 @@ fn move_to_next_nonempty_word_end(state: &mut EditorState) {
 fn move_to_next_nonempty_line_start(state: &mut EditorState) -> bool {
     let mut row = state.cursor.row + 1;
     while row < state.lines.iter_row().count()
-        && state.lines.len_col(row).unwrap_or_default() == 0
+        && (state.lines.len_col(row).unwrap_or_default() == 0
+            || (state.lines.len_col(row).unwrap_or_default() == 1
+                && row + 1 < state.lines.iter_row().count()))
     {
         row += 1;
     }

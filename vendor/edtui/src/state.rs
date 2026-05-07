@@ -65,6 +65,8 @@ pub struct EditorState {
 
     pub(crate) vim_after_redo: bool,
 
+    pub(crate) vim_linewise_delete_after_substitute: bool,
+
     /// Nesting depth for undo captures coalesced into a single transaction.
     pub(crate) undo_transaction_depth: usize,
 
@@ -116,6 +118,7 @@ impl EditorState {
             vim_undo_cursor_anchor: None,
             vim_insert_capture_cursor_override: None,
             vim_after_redo: false,
+            vim_linewise_delete_after_substitute: false,
             undo_transaction_depth: 0,
             undo_transaction_captured: false,
             #[cfg(feature = "system-editor")]

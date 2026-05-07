@@ -37,8 +37,16 @@ impl VimCommandContext<'_> {
                 let count = self.state.take_count();
                 self.state.clear();
                 if let Some(target_row) = count.and_then(|n| n.checked_sub(1)) {
+                    let preferred_col = editor.preferred_col.unwrap_or(editor.cursor.col);
                     move_to_row(editor, target_row);
-                    editor.preferred_col = None;
+                    if preferred_col == usize::MAX {
+                        editor.cursor.col = editor
+                            .lines
+                            .len_col(editor.cursor.row)
+                            .unwrap_or_default()
+                            .saturating_sub(1);
+                    }
+                    editor.preferred_col = Some(preferred_col);
                 }
                 true
             }
@@ -129,8 +137,16 @@ impl VimCommandContext<'_> {
         {
             if key_input.key == Char('g') && key_input.modifiers == input::Modifiers::NONE {
                 let target_row = self.state.command_count().saturating_sub(1);
+                let preferred_col = editor.preferred_col.unwrap_or(editor.cursor.col);
                 move_to_row(editor, target_row);
-                editor.preferred_col = None;
+                if preferred_col == usize::MAX {
+                    editor.cursor.col = editor
+                        .lines
+                        .len_col(editor.cursor.row)
+                        .unwrap_or_default()
+                        .saturating_sub(1);
+                }
+                editor.preferred_col = Some(preferred_col);
                 self.lookup.clear();
                 self.state.clear();
                 return true;
@@ -171,7 +187,10 @@ impl VimCommandContext<'_> {
                 editor.discard_redundant_undo_top();
             }
             editor.cursor = destination;
-            if matches!(motion, MotionKind::LineEnd | MotionKind::Up | MotionKind::Down) {
+            if matches!(
+                motion,
+                MotionKind::LineEnd | MotionKind::Up | MotionKind::Down | MotionKind::FirstRow | MotionKind::LastRow
+            ) {
                 editor.preferred_col = preferred_col;
             } else {
                 editor.preferred_col = None;
@@ -223,6 +242,7 @@ impl VimCommandContext<'_> {
             } else {
                 vim_operator::apply_operator(editor, Operator::Change, range);
             }
+            editor.vim_linewise_delete_after_substitute = true;
         } else {
             editor.capture();
             editor.mode = EditorMode::Insert;

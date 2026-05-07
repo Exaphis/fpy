@@ -106,10 +106,13 @@ impl EditorState {
     pub fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             let current_lines = self.lines.clone();
-            let current_cursor = prev
+            let mut current_cursor = prev
                 .redo_cursor_override
                 .or_else(|| redo_cursor_for_state(&prev.lines, &current_lines))
                 .unwrap_or(self.cursor);
+            if prev.cursor.col == 0 && is_insert_at_cursor(&prev.lines, &current_lines, prev.cursor) {
+                current_cursor = prev.cursor;
+            }
             let changed_cursor = redo_cursor_for_state(&current_lines, &prev.lines).unwrap_or(prev.cursor);
             let current = UndoState {
                 lines: current_lines,
@@ -135,6 +138,18 @@ impl EditorState {
             self.undo.push(current);
         }
     }
+}
+
+fn is_insert_at_cursor(before: &Lines, after: &Lines, cursor: Index2) -> bool {
+    let Some(before_row) = before.iter_row().nth(cursor.row) else {
+        return false;
+    };
+    let Some(after_row) = after.iter_row().nth(cursor.row) else {
+        return false;
+    };
+    after_row.len() == before_row.len() + 1
+        && after_row[..cursor.col] == before_row[..cursor.col]
+        && after_row[cursor.col + 1..] == before_row[cursor.col..]
 }
 
 fn vim_undoredo_cursor(saved_cursor: Index2, changed_cursor: Index2, lines: &Lines) -> Index2 {
