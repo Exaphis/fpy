@@ -34,10 +34,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         Vec::new()
     };
 
-    let (startup_message, bootstrap_task, mut bootstrap_rx) = start_bootstrap(cli)?;
+    let (bootstrap_task, mut bootstrap_rx) = start_bootstrap(cli)?;
     let mut ui = AppUi::new("starting".to_string())?;
     ui.load_history(loaded_history);
-    ui.insert_transcript(startup_message)?;
     for warning in history_warnings {
         ui.insert_transcript(format!("warning: {warning}"))?;
     }
@@ -144,12 +143,7 @@ impl ExecutionTimer {
     }
 }
 
-fn start_bootstrap(cli: Cli) -> Result<(String, JoinHandle<()>, BootstrapReceiver)> {
-    let startup_message = match &cli.command {
-        Command::Run(_) => "starting local kernel...".to_string(),
-        Command::Attach(args) => format!("connecting to {}...", args.connection_file.display()),
-    };
-
+fn start_bootstrap(cli: Cli) -> Result<(JoinHandle<()>, BootstrapReceiver)> {
     let (tx, rx) = oneshot::channel();
     let task = tokio::spawn(async move {
         let result = match cli.command {
@@ -168,7 +162,7 @@ fn start_bootstrap(cli: Cli) -> Result<(String, JoinHandle<()>, BootstrapReceive
         let _ = tx.send(result);
     });
 
-    Ok((startup_message, task, rx))
+    Ok((task, rx))
 }
 
 async fn run_active_iteration(
