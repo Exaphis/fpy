@@ -332,6 +332,16 @@ const STEP_CASES: &[StepCase] = &[
         steps: &["idef test_1234(x: int):<Esc>", "o    foobar<Esc>", "u"],
     },
     StepCase {
+        name: "python_autoindent_open_below_copies_current_indent",
+        initial: "    x = 1",
+        steps: &["oX<Esc>"],
+    },
+    StepCase {
+        name: "python_autoindent_open_below_after_colon",
+        initial: "def foo():",
+        steps: &["obar<Esc>"],
+    },
+    StepCase {
         name: "dynamic_multiline_construction_then_delete_line",
         initial: "a b c d e",
         steps: &["idef test_1234(x: int):<Esc>", "o    foobar<Esc>", "dd"],
@@ -797,10 +807,12 @@ vim.o.expandtab = true
 vim.o.shiftwidth = 4
 vim.o.tabstop = 4
 vim.o.softtabstop = 4
-vim.o.autoindent = false
+vim.o.autoindent = true
 vim.o.smartindent = false
 vim.o.cindent = false
 vim.o.indentexpr = ''
+vim.cmd('filetype plugin on')
+vim.cmd('filetype indent on')
 for line in io.lines() do
   if line == 'QUIT' then break end
   local fields = {}
@@ -808,6 +820,7 @@ for line in io.lines() do
   if fields[1] == 'RUN' then
     local trace = fields[2] == '1'
     vim.cmd('enew!')
+    vim.bo.filetype = 'python'
     local old_undolevels = vim.o.undolevels
     vim.o.undolevels = -1
     vim.api.nvim_buf_set_lines(0, 0, -1, true, split_lines(hex_decode(fields[3] or '')))

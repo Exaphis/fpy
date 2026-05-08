@@ -1,4 +1,5 @@
 use crate::{
+    clipboard::ClipboardTrait,
     events::key::input::{self, KeyInput},
     state::selection::set_selection_with_lines,
     EditorMode, EditorState,
@@ -394,8 +395,32 @@ impl VimCommandContext<'_> {
                     self.state.clear();
                     return true;
                 }
-            } else if let Some(range) = text_object_range(prefix, key_input, editor) {
+            } else if op == 'c'
+                && prefix == 'i'
+                && key_input.key == Char('w')
+                && change_leading_indent_word(editor)
+            {
+                self.lookup.clear();
+                self.state.clear();
+                return true;
+            } else if let Some(mut range) = text_object_range(prefix, key_input, editor) {
                 if op == 'c' && matches!(prefix, 'i' | 'a') {
+                    let change_from_leading_whitespace = editor.cursor.col < range.start.col
+                        && editor
+                            .lines
+                            .iter_row()
+                            .nth(editor.cursor.row)
+                            .is_some_and(|row| row.first().is_some_and(|ch| ch.is_ascii_whitespace()));
+                    if change_from_leading_whitespace {
+                        range.start.col = 0;
+                        range.end.col = editor
+                            .lines
+                            .iter_row()
+                            .nth(editor.cursor.row)
+                            .map(|row| row.iter().take_while(|ch| ch.is_ascii_whitespace()).count())
+                            .unwrap_or(1)
+                            .saturating_sub(1);
+                    }
                     editor.capture_with_cursor(range.start);
                     let redo_cursor = if range.start.row == range.end.row
                         && range.start.col > 0
@@ -409,6 +434,7 @@ impl VimCommandContext<'_> {
                         range.start
                     };
                     editor.set_redo_cursor_override(redo_cursor);
+                    editor.vim_change_from_leading_whitespace = false;
                     apply_operator_without_capture(op, editor, range);
                 } else {
                     apply_operator(op, editor, range);
@@ -528,6 +554,32 @@ fn execute_operator_motion(
     } else {
         false
     }
+}
+
+fn change_leading_indent_word(editor: &mut EditorState) -> bool {
+    if editor.cursor.col != 0 {
+        return false;
+    }
+    let Some(line) = editor.lines.iter_row().nth(editor.cursor.row) else {
+        return false;
+    };
+    let leading_spaces = line.iter().take_while(|ch| **ch == ' ').count();
+    if leading_spaces < 4 || leading_spaces >= line.len() {
+        return false;
+    }
+    let start = crate::Index2::new(editor.cursor.row, 0);
+    editor.capture_with_cursor(start);
+    editor.set_redo_cursor_override(start);
+    let mut yanked = String::new();
+    for _ in 0..leading_spaces {
+        yanked.push(' ');
+        editor.lines.remove(start);
+    }
+    editor.clip.set_text(yanked);
+    editor.vim_last_yank_linewise = false;
+    editor.cursor = start;
+    editor.mode = EditorMode::Insert;
+    true
 }
 
 fn apply_operator(op: char, editor: &mut EditorState, range: TextRange) {

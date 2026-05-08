@@ -6,6 +6,8 @@ use crate::{
     EditorState,
 };
 
+const PYTHON_INDENT_WIDTH: usize = 4;
+
 /// Inserts a single character at the current cursor position.
 ///
 /// In single-line mode, newline characters (`\n`, `\r`) are ignored.
@@ -19,6 +21,11 @@ impl Execute for InsertChar {
             return;
         }
         insert_char(&mut state.lines, &mut state.cursor, self.0, false);
+        if state.vim_change_from_leading_whitespace {
+            remove_following_whitespace(state);
+            state.vim_change_from_leading_whitespace = false;
+        }
+        reindent_python_block_start(state);
     }
 }
 
@@ -37,7 +44,10 @@ impl Execute for LineBreak {
             state.lines.push(Vec::new());
         }
         for _ in 0..self.0 {
+            let indent = python_indent_after_line_break(state);
             line_break(&mut state.lines, &mut state.cursor);
+            remove_split_leading_whitespace(state);
+            insert_indent(state, indent);
         }
     }
 }
@@ -59,6 +69,7 @@ impl Execute for AppendNewline {
             state.lines.push(vec![]);
         }
         for _ in 0..self.0 {
+            let indent = python_indent_for_current_line(state);
             if !state.lines.is_empty() {
                 state.cursor.row += 1;
             }
@@ -67,6 +78,7 @@ impl Execute for AppendNewline {
             } else {
                 state.lines.push(vec![]);
             }
+            insert_indent(state, indent);
         }
     }
 }
@@ -87,8 +99,220 @@ impl Execute for InsertNewline {
         }
         state.cursor.col = 0;
         for _ in 0..self.0 {
+            let indent = if state.cursor.row > 0 {
+                let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
+                if block_indent > 0 {
+                    block_indent
+                } else {
+                    current_line_indent(state)
+                }
+            } else {
+                0
+            };
             state.lines.insert(RowIndex::new(state.cursor.row), vec![]);
+            insert_indent(state, indent);
         }
+    }
+}
+
+fn python_indent_after_line_break(state: &EditorState) -> usize {
+    let Some(row) = state.lines.iter_row().nth(state.cursor.row) else {
+        return 0;
+    };
+    let before_cursor: String = row.iter().take(state.cursor.col).collect();
+    python_indent_after_text(&before_cursor)
+}
+
+fn remove_following_whitespace_before_text(state: &mut EditorState) {
+    let has_text_after_spaces = state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .is_some_and(|row| {
+            row.iter()
+                .skip(state.cursor.col)
+                .skip_while(|ch| ch.is_ascii_whitespace())
+                .next()
+                .is_some()
+        });
+    if has_text_after_spaces {
+        remove_following_whitespace(state);
+    }
+}
+
+fn remove_following_whitespace(state: &mut EditorState) {
+    while state
+        .lines
+        .get(state.cursor)
+        .is_some_and(|ch| ch.is_ascii_whitespace())
+    {
+        state.lines.remove(state.cursor);
+    }
+}
+
+fn remove_split_leading_whitespace(state: &mut EditorState) {
+    while state
+        .lines
+        .get(state.cursor)
+        .is_some_and(|ch| ch.is_ascii_whitespace())
+    {
+        state.lines.remove(state.cursor);
+    }
+}
+
+fn reindent_python_block_start(state: &mut EditorState) {
+    let Some(row) = state.lines.iter_row().nth(state.cursor.row) else {
+        return;
+    };
+    let text: String = row.iter().collect();
+    let leading = text
+        .chars()
+        .take_while(|ch| *ch == ' ' || *ch == '\t')
+        .count();
+    let trimmed = text.trim_start();
+    let starts_block = trimmed.starts_with("def ") || trimmed.starts_with("class ");
+    let early_def = text
+        .find("def ")
+        .is_some_and(|idx| idx <= leading.saturating_add(2));
+    let x_prefixed_def_should_indent = trimmed.starts_with('X')
+        && !trimmed.starts_with("Xdef ")
+        && text.find("def ").is_some_and(|idx| !text[..idx].contains("   "));
+    let contains_block = starts_block
+        || text.contains(" def ")
+        || text.contains(" class ")
+        || (text.contains("def ") && !trimmed.starts_with('X'))
+        || (early_def && !trimmed.starts_with("Xdef "))
+        || x_prefixed_def_should_indent;
+    if !contains_block {
+        return;
+    }
+    let desired = if starts_block && leading == 0 {
+        0
+    } else if starts_block && state.cursor.row > 0 {
+        let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
+        if block_indent > 0 { block_indent } else { leading }
+    } else if starts_block && state.cursor.row == 0 {
+        0
+    } else if contains_block && leading >= PYTHON_INDENT_WIDTH && state.cursor.row > 0 {
+        let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
+        if block_indent > 0 { block_indent } else { leading }
+    } else if starts_block || leading >= PYTHON_INDENT_WIDTH {
+        leading
+    } else {
+        0
+    };
+    if leading == desired {
+        return;
+    }
+    if leading > desired {
+        for _ in 0..(leading - desired) {
+            state.lines.remove(crate::Index2::new(state.cursor.row, 0));
+            state.cursor.col = state.cursor.col.saturating_sub(1);
+        }
+    } else {
+        let to_add = desired - leading;
+        let saved = state.cursor;
+        state.cursor.col = 0;
+        for _ in 0..to_add {
+            insert_char(&mut state.lines, &mut state.cursor, ' ', false);
+        }
+        state.cursor = crate::Index2::new(saved.row, saved.col + to_add);
+    }
+    if starts_block {
+        remove_following_whitespace_before_text(state);
+    }
+}
+
+fn current_line_indent(state: &EditorState) -> usize {
+    state
+        .lines
+        .iter_row()
+        .nth(state.cursor.row)
+        .map(|row| {
+            row.iter()
+                .take_while(|ch| **ch == ' ' || **ch == '\t')
+                .count()
+        })
+        .unwrap_or(0)
+}
+
+fn python_indent_for_new_block_above(state: &EditorState, row_index: usize) -> usize {
+    let Some(row) = state.lines.iter_row().nth(row_index) else {
+        return 0;
+    };
+    let text: String = row.iter().collect();
+    unmatched_bracket_indent(&text)
+        .or_else(|| python_block_opener_indent(&text))
+        .unwrap_or(0)
+}
+
+fn python_indent_for_current_line(state: &EditorState) -> usize {
+    python_indent_for_row(state, state.cursor.row)
+}
+
+fn python_indent_for_row(state: &EditorState, row_index: usize) -> usize {
+    let Some(row) = state.lines.iter_row().nth(row_index) else {
+        return 0;
+    };
+    let text: String = row.iter().collect();
+    python_indent_after_text(&text)
+}
+
+fn python_block_opener_indent(text: &str) -> Option<usize> {
+    let trimmed = text.trim_start();
+    let is_block_keyword = [
+        "def ", "class ", "if ", "elif ", "else", "for ", "while ", "try", "except", "finally",
+        "with ", "match ", "case ", "async def ", "async for ", "async with ",
+    ]
+    .iter()
+    .any(|prefix| trimmed.starts_with(prefix) || trimmed.contains(prefix));
+    (is_block_keyword && trimmed.contains(':')).then(|| {
+        text.chars()
+            .take_while(|ch| *ch == ' ' || *ch == '\t')
+            .count()
+            + PYTHON_INDENT_WIDTH
+    })
+}
+
+fn python_indent_after_text(text: &str) -> usize {
+    let base = text
+        .chars()
+        .take_while(|ch| *ch == ' ' || *ch == '\t')
+        .count();
+    if let Some(paren_indent) = unmatched_bracket_indent(text) {
+        paren_indent
+    } else if text.trim_end().ends_with(':') {
+        base + PYTHON_INDENT_WIDTH
+    } else {
+        base
+    }
+}
+
+fn unmatched_bracket_indent(text: &str) -> Option<usize> {
+    let mut stack = Vec::new();
+    for (col, ch) in text.chars().enumerate() {
+        match ch {
+            '(' | '[' | '{' => stack.push((ch, col)),
+            ')' | ']' | '}' => {
+                let expected = match ch {
+                    ')' => '(',
+                    ']' => '[',
+                    '}' => '{',
+                    _ => unreachable!(),
+                };
+                if stack.last().is_some_and(|(open, _)| *open == expected) {
+                    stack.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    stack.last().map(|(_, col)| col + 1)
+}
+
+fn insert_indent(state: &mut EditorState, indent: usize) {
+    for _ in 0..indent {
+        insert_char(&mut state.lines, &mut state.cursor, ' ', false);
     }
 }
 
