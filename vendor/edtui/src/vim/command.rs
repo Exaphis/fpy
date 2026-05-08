@@ -206,6 +206,9 @@ impl VimCommandContext<'_> {
 
     fn handle_delete_atom_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
         use input::KeyCode::Char;
+        if !self.lookup.is_empty() {
+            return false;
+        }
         match (key_input.key, key_input.modifiers) {
             (Char('x'), input::Modifiers::NONE) => {
                 let count = self.take_command_count();

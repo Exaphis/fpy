@@ -129,6 +129,16 @@ const CASES: &[Case] = &[
         keys: "xp",
     },
     Case {
+        name: "delete_till_p_does_not_paste",
+        initial: "abc pqr",
+        keys: "dtp",
+    },
+    Case {
+        name: "change_till_p_does_not_paste",
+        initial: "abc pqr",
+        keys: "ctX<Esc>",
+    },
+    Case {
         name: "paste_after_line_delete",
         initial: "abc\ndef",
         keys: "ddp",
