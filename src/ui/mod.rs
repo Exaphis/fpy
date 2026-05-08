@@ -716,9 +716,12 @@ impl AppUi {
                     OverlayKind::None => {
                         frame.render_widget(ClearWidget, content_area);
                         frame.render_widget(ClearWidget, status_area);
-                        let gutter_width =
-                            editor_gutter_width(awaiting_input.as_ref(), visible_lines)
-                                .min(content_area.width);
+                        let gutter_width = editor_gutter_width(
+                            awaiting_input.as_ref(),
+                            visible_lines,
+                            &prompt_label,
+                        )
+                        .min(content_area.width);
                         let [gutter_area, content_area] = Layout::horizontal([
                             Constraint::Length(gutter_width),
                             Constraint::Min(1),
@@ -737,6 +740,7 @@ impl AppUi {
                             gutter_area.height as usize,
                             visible_lines,
                             editor.first_visible_line(),
+                            &prompt_label,
                         );
                         frame.render_widget(Paragraph::new(gutter_lines), gutter_area);
                     }
