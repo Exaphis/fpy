@@ -9,6 +9,7 @@ use edtui::syntect::{
 
 const TRANSCRIPT_THEME_NAME: &str = "base16-ocean.dark";
 const PROMPT_ANSI: &str = "\x1b[36m";
+const RUNTIME_ANSI: &str = "\x1b[38;5;244m";
 const ANSI_RESET: &str = "\x1b[0m";
 
 static TRANSCRIPT_SYNTAX_SET: LazyLock<SyntaxSet> =
@@ -54,7 +55,7 @@ pub(super) fn highlighted_execute_input(execution_count: Option<u32>, code: &str
 }
 
 pub(super) fn runtime_line(duration: Duration) -> String {
-    format!("{PROMPT_ANSI}[{}]{ANSI_RESET}", format_runtime(duration))
+    format!("{RUNTIME_ANSI}[{}]{ANSI_RESET}", format_runtime(duration))
 }
 
 fn format_runtime(duration: Duration) -> String {
