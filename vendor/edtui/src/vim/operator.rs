@@ -346,6 +346,7 @@ fn apply_linewise_edit(
             .unwrap_or_default()
             .saturating_sub(1)
     } else if state.vim_linewise_delete_after_substitute
+        && state.cursor.col != 0
         && range.start.row == 0
         && range.start.row == range.end.row
         && state.lines.len_col(range.start.row).unwrap_or_default() == 1
@@ -356,6 +357,10 @@ fn apply_linewise_edit(
             .len_col(range.start.row + 1)
             .unwrap_or_default()
             .saturating_sub(1)
+    } else if state.cursor.col == 0
+        && state.lines.len_col(state.cursor.row).unwrap_or_default() <= 1
+    {
+        0
     } else {
         state.preferred_col.unwrap_or(state.cursor.col)
     };

@@ -194,18 +194,12 @@ fn first_non_whitespace_col_or_last_blank(lines: &crate::Lines, row: usize) -> u
 fn move_word_end_once(state: &mut EditorState) {
     use crate::actions::{Execute, MoveWordForwardToEndOfWord};
 
-    if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0 {
-        if state.cursor.row == 0
-            || (state.cursor.row > 0 && state.lines.len_col(state.cursor.row - 1).unwrap_or_default() <= 1)
-            || state
-                .lines
-                .get(Index2::new(state.cursor.row + 1, 0))
-                .is_some_and(|ch| ch.is_ascii_uppercase())
-        {
-            move_to_next_nonempty_word_end(state);
-        } else {
-            move_to_next_nonempty_line_start(state);
-        }
+    if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
+        || state.lines.iter_row().nth(state.cursor.row).is_some_and(|row| {
+            !row.is_empty() && row.iter().all(|ch| ch.is_ascii_whitespace())
+        })
+    {
+        move_to_next_nonempty_first_word_end(state);
         return;
     }
 
@@ -240,6 +234,27 @@ fn move_to_next_nonempty_word_end(state: &mut EditorState) {
     if move_to_next_nonempty_line_start(state) {
         MoveWordForwardToEndOfWord(1).execute(state);
     }
+}
+
+fn move_to_next_nonempty_first_word_end(state: &mut EditorState) -> bool {
+    let mut row = state.cursor.row + 1;
+    while row < state.lines.iter_row().count() && state.lines.len_col(row).unwrap_or_default() == 0 {
+        row += 1;
+    }
+    let Some(line) = state.lines.iter_row().nth(row) else {
+        return false;
+    };
+    let Some(start) = line.iter().position(|ch| !ch.is_ascii_whitespace()) else {
+        return false;
+    };
+    let class = CharacterClass::from(line.get(start));
+    let mut end = start;
+    while end + 1 < line.len() && CharacterClass::from(line.get(end + 1)) == class {
+        end += 1;
+    }
+    state.preferred_col = None;
+    state.cursor = Index2::new(row, end);
+    true
 }
 
 fn move_to_next_nonempty_line_start(state: &mut EditorState) -> bool {
@@ -298,16 +313,6 @@ fn move_word_backward_once(state: &mut EditorState) {
 
 fn move_big_word_forward_once(state: &mut EditorState) {
     use crate::actions::{Execute, MoveBigWordForward};
-
-    if state.cursor.col == 0
-        && state.lines.iter_row().nth(state.cursor.row).is_some_and(|row| {
-            !row.is_empty() && row.iter().all(|ch| ch.is_ascii_whitespace())
-        })
-    {
-        state.preferred_col = None;
-        state.cursor.col = state.lines.len_col(state.cursor.row).unwrap_or_default().saturating_sub(1);
-        return;
-    }
 
     let start_row = state.cursor.row;
     MoveBigWordForward(1).execute(state);

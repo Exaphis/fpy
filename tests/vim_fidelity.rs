@@ -508,6 +508,7 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_neovim() {
         "3e",
         "u",
         "<C-r>",
+        "dtp",
     ];
     let multiline_atoms = [
         "h",
@@ -567,6 +568,7 @@ fn fuzz_supported_vim_normal_mode_sequences_against_real_neovim() {
         "2k",
         "u",
         "<C-r>",
+        "dtp",
     ];
     let initials = [
         "one two three",

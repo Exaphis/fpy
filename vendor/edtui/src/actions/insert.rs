@@ -171,18 +171,7 @@ fn reindent_python_block_start(state: &mut EditorState) {
         .count();
     let trimmed = text.trim_start();
     let starts_block = trimmed.starts_with("def ") || trimmed.starts_with("class ");
-    let early_def = text
-        .find("def ")
-        .is_some_and(|idx| idx <= leading.saturating_add(2));
-    let x_prefixed_def_should_indent = trimmed.starts_with('X')
-        && !trimmed.starts_with("Xdef ")
-        && text.find("def ").is_some_and(|idx| !text[..idx].contains("   "));
-    let contains_block = starts_block
-        || text.contains(" def ")
-        || text.contains(" class ")
-        || (text.contains("def ") && !trimmed.starts_with('X'))
-        || (early_def && !trimmed.starts_with("Xdef "))
-        || x_prefixed_def_should_indent;
+    let contains_block = starts_block || line_contains_python_block_keyword(&text, leading);
     if !contains_block {
         return;
     }
@@ -221,6 +210,27 @@ fn reindent_python_block_start(state: &mut EditorState) {
     if starts_block {
         remove_following_whitespace_before_text(state);
     }
+}
+
+fn line_contains_python_block_keyword(text: &str, leading: usize) -> bool {
+    find_python_block_keyword(text).is_some_and(|idx| {
+        if idx <= leading {
+            return true;
+        }
+        let prefix = &text[..idx];
+        let non_indent_prefix = prefix.trim_start_matches([' ', '\t']);
+        !non_indent_prefix.contains("   ") && text[idx..].contains("):")
+    })
+}
+
+fn find_python_block_keyword(text: &str) -> Option<usize> {
+    let mut best = None;
+    for keyword in ["def ", "class "] {
+        if let Some(idx) = text.find(keyword) {
+            best = Some(best.map_or(idx, |best: usize| best.min(idx)));
+        }
+    }
+    best
 }
 
 fn current_line_indent(state: &EditorState) -> usize {
