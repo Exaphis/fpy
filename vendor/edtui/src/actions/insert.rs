@@ -185,6 +185,8 @@ fn reindent_python_block_start(state: &mut EditorState) {
     } else if contains_block && leading >= PYTHON_INDENT_WIDTH && state.cursor.row > 0 {
         let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
         if block_indent > 0 { block_indent } else { leading }
+    } else if contains_block && state.cursor.row == 0 {
+        0
     } else if starts_block || leading >= PYTHON_INDENT_WIDTH {
         leading
     } else {

@@ -88,7 +88,16 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         return;
     }
     state.preferred_col = None;
-    state.capture();
+    let restores_single_deleted_char = !state.vim_last_yank_linewise
+        && !text.contains('\n')
+        && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
+        && state
+            .lines
+            .len_col(state.cursor.row + 1)
+            .is_some_and(|len| len > 0);
+    if !restores_single_deleted_char {
+        state.capture();
+    }
     if state.vim_last_yank_linewise {
         let mut rows: Vec<String> = state
             .lines
@@ -145,6 +154,9 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         state.cursor.row = row;
         state.cursor.col = col + text.chars().count().saturating_sub(1);
         clamp_cursor(state);
+        if restores_single_deleted_char {
+            state.discard_redundant_undo_top();
+        }
     }
 }
 

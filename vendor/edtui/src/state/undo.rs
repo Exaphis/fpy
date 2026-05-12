@@ -110,7 +110,9 @@ impl EditorState {
                 .redo_cursor_override
                 .or_else(|| redo_cursor_for_state(&prev.lines, &current_lines))
                 .unwrap_or(self.cursor);
-            if prev.cursor.col == 0 && is_insert_at_cursor(&prev.lines, &current_lines, prev.cursor) {
+            let restore_insert_start =
+                prev.cursor.col == 0 && is_insert_at_cursor(&prev.lines, &current_lines, prev.cursor);
+            if restore_insert_start {
                 current_cursor = prev.cursor;
             }
             let changed_cursor = redo_cursor_for_state(&current_lines, &prev.lines).unwrap_or(prev.cursor);
@@ -120,7 +122,11 @@ impl EditorState {
                 redo_cursor_override: None,
             };
             self.lines = prev.lines;
-            self.cursor = vim_undoredo_cursor(prev.cursor, changed_cursor, &self.lines);
+            self.cursor = if restore_insert_start {
+                prev.cursor
+            } else {
+                vim_undoredo_cursor(prev.cursor, changed_cursor, &self.lines)
+            };
             self.redo.push(current);
         }
     }
@@ -136,9 +142,15 @@ impl EditorState {
                 cursor: self.cursor,
                 redo_cursor_override: None,
             };
+            let restore_insert_start =
+                prev.cursor.col == 0 && is_insert_at_cursor(&self.lines, &prev.lines, prev.cursor);
             let changed_cursor = redo_cursor_for_state(&self.lines, &prev.lines).unwrap_or(prev.cursor);
             self.lines = prev.lines;
-            self.cursor = vim_undoredo_cursor(prev.cursor, changed_cursor, &self.lines);
+            self.cursor = if restore_insert_start {
+                prev.cursor
+            } else {
+                vim_undoredo_cursor(prev.cursor, changed_cursor, &self.lines)
+            };
             self.undo.push(current);
         }
     }
