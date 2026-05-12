@@ -44,10 +44,33 @@ impl Execute for LineBreak {
             state.lines.push(Vec::new());
         }
         for _ in 0..self.0 {
+            let kept_split_spaces = state.lines.iter_row().nth(state.cursor.row).map_or(0, |row| {
+                let split_spaces = row
+                    .iter()
+                    .skip(state.cursor.col)
+                    .take_while(|ch| ch.is_ascii_whitespace())
+                    .count();
+                let has_text_after_split_spaces = row
+                    .iter()
+                    .skip(state.cursor.col + split_spaces)
+                    .any(|ch| !ch.is_ascii_whitespace());
+                if row.iter().take_while(|ch| ch.is_ascii_whitespace()).count() >= PYTHON_INDENT_WIDTH
+                    && row.iter().take(state.cursor.col).any(|ch| !ch.is_ascii_whitespace())
+                    && split_spaces == 1
+                    && has_text_after_split_spaces
+                {
+                    split_spaces
+                } else {
+                    0
+                }
+            });
             let indent = python_indent_after_line_break(state);
             line_break(&mut state.lines, &mut state.cursor);
-            remove_split_leading_whitespace(state);
+            if kept_split_spaces == 0 {
+                remove_split_leading_whitespace(state);
+            }
             insert_indent(state, indent);
+            state.cursor.col += kept_split_spaces;
         }
     }
 }
@@ -178,8 +201,12 @@ fn reindent_python_block_start(state: &mut EditorState) {
     let desired = if starts_block && leading == 0 {
         0
     } else if starts_block && state.cursor.row > 0 {
-        let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
-        if block_indent > 0 { block_indent } else { leading }
+        if leading < PYTHON_INDENT_WIDTH {
+            leading
+        } else {
+            let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
+            if block_indent > 0 { block_indent } else { leading }
+        }
     } else if starts_block && state.cursor.row == 0 {
         0
     } else if contains_block && leading >= PYTHON_INDENT_WIDTH && state.cursor.row > 0 {

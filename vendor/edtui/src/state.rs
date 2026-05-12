@@ -69,6 +69,12 @@ pub struct EditorState {
 
     pub(crate) vim_change_from_leading_whitespace: bool,
 
+    pub(crate) vim_transient_paste_undo: bool,
+
+    pub(crate) vim_pending_undo_cursor: Option<Index2>,
+
+    pub(crate) vim_failed_right_col: Option<usize>,
+
     /// Nesting depth for undo captures coalesced into a single transaction.
     pub(crate) undo_transaction_depth: usize,
 
@@ -122,6 +128,9 @@ impl EditorState {
             vim_after_redo: false,
             vim_linewise_delete_after_substitute: false,
             vim_change_from_leading_whitespace: false,
+            vim_transient_paste_undo: false,
+            vim_pending_undo_cursor: None,
+            vim_failed_right_col: None,
             undo_transaction_depth: 0,
             undo_transaction_captured: false,
             #[cfg(feature = "system-editor")]

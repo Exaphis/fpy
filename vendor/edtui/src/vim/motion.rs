@@ -105,41 +105,22 @@ pub(crate) fn motion_effect(
     count: usize,
 ) -> Option<(Index2, Option<usize>)> {
     let mut scratch = state.clone();
-    let iterations = if motion == MotionKind::WordEnd
-        && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
-        && next_nonempty_line_len(state) == Some(1)
-    {
-        1
-    } else {
-        count.max(1)
-    };
+    let iterations = count.max(1);
     for _ in 0..iterations {
         apply_motion_once(&mut scratch, motion)?;
     }
     Some((scratch.cursor, scratch.preferred_col))
 }
 
-fn next_nonempty_line_len(state: &EditorState) -> Option<usize> {
-    let mut row = state.cursor.row + 1;
-    while row < state.lines.iter_row().count() {
-        let len = state.lines.len_col(row).unwrap_or_default();
-        if len > 0 {
-            return Some(len);
-        }
-        row += 1;
-    }
-    None
-}
-
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
-    use crate::actions::{Execute, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp};
+    use crate::actions::{Execute, MoveDown, MoveUp};
 
     match motion {
         MotionKind::WordForward => move_word_forward_once(state),
         MotionKind::WordEnd => move_word_end_once(state),
         MotionKind::WordBackward => move_word_backward_once(state),
         MotionKind::BigWordForward => move_big_word_forward_once(state),
-        MotionKind::BigWordEnd => MoveBigWordForwardToEndOfWord(1).execute(state),
+        MotionKind::BigWordEnd => move_big_word_end_once(state),
         MotionKind::BigWordBackward => move_big_word_backward_once(state),
         MotionKind::LineStart => {
             state.preferred_col = None;
@@ -327,6 +308,38 @@ fn move_word_backward_once(state: &mut EditorState) {
         start = prev;
     }
     state.cursor = start;
+}
+
+fn move_big_word_end_once(state: &mut EditorState) {
+    use crate::actions::{Execute, MoveBigWordForwardToEndOfWord};
+
+    if state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
+        && state.cursor.row + 1 < state.lines.iter_row().count()
+    {
+        move_to_next_nonempty_big_word_end(state);
+        return;
+    }
+    MoveBigWordForwardToEndOfWord(1).execute(state);
+}
+
+fn move_to_next_nonempty_big_word_end(state: &mut EditorState) -> bool {
+    let mut row = state.cursor.row + 1;
+    while row < state.lines.iter_row().count() && state.lines.len_col(row).unwrap_or_default() == 0 {
+        row += 1;
+    }
+    let Some(line) = state.lines.iter_row().nth(row) else {
+        return false;
+    };
+    let Some(start) = line.iter().position(|ch| !ch.is_ascii_whitespace()) else {
+        return false;
+    };
+    let mut end = start;
+    while end + 1 < line.len() && !line[end + 1].is_ascii_whitespace() {
+        end += 1;
+    }
+    state.preferred_col = None;
+    state.cursor = Index2::new(row, end);
+    true
 }
 
 fn move_big_word_forward_once(state: &mut EditorState) {

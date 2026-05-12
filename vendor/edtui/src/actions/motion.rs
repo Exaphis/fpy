@@ -589,10 +589,10 @@ pub struct MoveToFirstRow();
 
 impl Execute for MoveToFirstRow {
     fn execute(&mut self, state: &mut EditorState) {
-        state.preferred_col = None;
+        let col = state.preferred_col.unwrap_or(state.cursor.col);
+        state.preferred_col = Some(col);
         state.cursor.row = 0;
-        state.cursor.col = 0;
-        skip_whitespace(&state.lines, &mut state.cursor);
+        state.cursor.col = col.min(max_col(&state.lines, &state.cursor, state.mode));
 
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -606,10 +606,10 @@ pub struct MoveToLastRow();
 
 impl Execute for MoveToLastRow {
     fn execute(&mut self, state: &mut EditorState) {
-        state.preferred_col = None;
+        let col = state.preferred_col.unwrap_or(state.cursor.col);
+        state.preferred_col = Some(col);
         state.cursor.row = state.lines.len().saturating_sub(1);
-        state.cursor.col = 0;
-        skip_whitespace(&state.lines, &mut state.cursor);
+        state.cursor.col = col.min(max_col(&state.lines, &state.cursor, state.mode));
 
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);

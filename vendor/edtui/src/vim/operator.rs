@@ -88,13 +88,19 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         return;
     }
     state.preferred_col = None;
-    let restores_single_deleted_char = !state.vim_last_yank_linewise
+    let line_len = state.lines.len_col(state.cursor.row).unwrap_or_default();
+    let restores_empty_line_deleted_char = !state.vim_last_yank_linewise
         && !text.contains('\n')
-        && state.lines.len_col(state.cursor.row).unwrap_or_default() == 0
+        && line_len == 0
         && state
             .lines
             .len_col(state.cursor.row + 1)
             .is_some_and(|len| len > 0);
+    let restores_eol_deleted_char = !state.vim_last_yank_linewise
+        && !text.contains('\n')
+        && line_len > 0
+        && state.cursor.col + 1 >= line_len;
+    let restores_single_deleted_char = restores_empty_line_deleted_char || restores_eol_deleted_char;
     if !restores_single_deleted_char {
         state.capture();
     }
@@ -107,19 +113,24 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         if rows.is_empty() {
             rows.push(String::new());
         }
-        let insert_at = (state.cursor.row + 1).min(rows.len());
+        let mut insert_at = (state.cursor.row + 1).min(rows.len());
         let empty_buffer = !rows.iter().any(|row| !row.is_empty());
-        let pasted_text = text.trim_start_matches('\n');
+        let pasted_text = if empty_buffer && text.starts_with("\n\n") {
+            text.as_str()
+        } else {
+            text.trim_start_matches('\n')
+        };
         let mut pasted_rows: Vec<String> = if pasted_text.is_empty() {
             vec![String::new()]
         } else {
             pasted_text.split('\n').map(str::to_string).collect()
         };
-        if !empty_buffer
-            && pasted_text.len() > 1
-            && pasted_rows.last().is_some_and(|row| row.is_empty())
-        {
+        if pasted_text.len() > 1 && pasted_rows.last().is_some_and(|row| row.is_empty()) {
             pasted_rows.pop();
+        }
+        if empty_buffer && text.starts_with("\n\n") {
+            rows.clear();
+            insert_at = 0;
         }
         rows.splice(insert_at..insert_at, pasted_rows);
         state.lines = Lines::default();
@@ -154,8 +165,12 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         state.cursor.row = row;
         state.cursor.col = col + text.chars().count().saturating_sub(1);
         clamp_cursor(state);
-        if restores_single_deleted_char {
-            state.discard_redundant_undo_top();
+        if restores_empty_line_deleted_char {
+            state.replace_undo_top_with_current();
+            state.vim_transient_paste_undo = true;
+        } else if restores_eol_deleted_char {
+            state.replace_undo_top_with_current();
+            state.vim_pending_undo_cursor = Some(state.cursor);
         }
     }
 }
@@ -224,12 +239,19 @@ fn apply_operator_with_capture(
                 state.vim_linewise_delete_after_substitute = false;
             }
             if capture {
+                if operator == Operator::Change {
+                    state.vim_pending_undo_cursor = None;
+                }
                 let undo_cursor = if operator == Operator::Delete {
                     range.start
                 } else {
                     state.cursor
                 };
-                state.capture_with_cursor(undo_cursor);
+                state.capture_with_cursor_and_span(
+                    undo_cursor,
+                    range.start.row.saturating_sub(1),
+                    range.end.row + 1,
+                );
             }
             let yanked = extract_range(state, range);
             state.clip.set_text(lines_to_text(&yanked));
@@ -339,12 +361,13 @@ fn apply_linewise_edit(
     if capture {
         capture_linewise_undo_state(state, range);
     }
+    let failed_right_col = state.vim_failed_right_col.take();
     let cursor_col_before_delete = if state.mode == EditorMode::Visual {
         0
     } else if !state.vim_linewise_delete_after_substitute
         && range.start.row == state.lines.len().saturating_sub(1)
         && range.start.row == range.end.row
-        && state.lines.len_col(range.start.row).unwrap_or_default() <= 1
+        && state.lines.len_col(range.start.row).unwrap_or_default() == 1
         && range.start.row > 1
         && state
             .lines
@@ -370,11 +393,12 @@ fn apply_linewise_edit(
             .unwrap_or_default()
             .saturating_sub(1)
     } else if state.cursor.col == 0
+        && state.preferred_col.is_none()
         && state.lines.len_col(state.cursor.row).unwrap_or_default() <= 1
     {
         0
     } else {
-        state.preferred_col.unwrap_or(state.cursor.col)
+        failed_right_col.unwrap_or_else(|| state.preferred_col.unwrap_or(state.cursor.col))
     };
     state.vim_linewise_delete_after_substitute = false;
     let _ = extract_linewise(state, range.start.row, range.end.row);
@@ -386,8 +410,8 @@ fn apply_linewise_edit(
     }
 }
 
-fn capture_linewise_undo_state(state: &mut EditorState, _range: TextRange) {
-    state.capture_with_cursor(state.cursor);
+fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
+    state.capture_with_cursor_and_span(state.cursor, range.start.row.saturating_sub(1), range.end.row + 1);
 }
 
 fn place_cursor_after_linewise_edit(

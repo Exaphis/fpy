@@ -60,6 +60,13 @@ impl VimCommandContext<'_> {
         key_input: KeyInput,
         editor: &mut EditorState,
     ) -> bool {
+        if editor.vim_transient_paste_undo
+            && !(key_input.key == input::KeyCode::Char('u')
+                && key_input.modifiers == input::Modifiers::NONE)
+        {
+            editor.discard_undo_top();
+            editor.vim_transient_paste_undo = false;
+        }
         self.handle_undo_redo_key(key_input, editor)
             || self.handle_visual_line_key(key_input, editor)
             || self.handle_standalone_word_motion_key(key_input, editor)
@@ -73,12 +80,16 @@ impl VimCommandContext<'_> {
         match (key_input.key, key_input.modifiers) {
             (input::KeyCode::Char('u'), input::Modifiers::NONE) => {
                 editor.undo();
+                editor.preferred_col = None;
                 editor.vim_after_redo = false;
+                editor.vim_transient_paste_undo = false;
             }
             (input::KeyCode::Char('r'), input::Modifiers::CONTROL)
             | (input::KeyCode::Char('r'), input::Modifiers::ALT) => {
                 editor.redo();
+                editor.preferred_col = None;
                 editor.vim_after_redo = true;
+                editor.vim_transient_paste_undo = false;
             }
             _ => return false,
         }
@@ -141,13 +152,21 @@ impl VimCommandContext<'_> {
                 let target_row = self.state.command_count().saturating_sub(1);
                 let preferred_col = editor.preferred_col.unwrap_or(editor.cursor.col);
                 move_to_row(editor, target_row);
-                if preferred_col == usize::MAX {
-                    editor.cursor.col = editor
+                editor.cursor.col = if preferred_col == usize::MAX {
+                    editor
                         .lines
                         .len_col(editor.cursor.row)
                         .unwrap_or_default()
-                        .saturating_sub(1);
-                }
+                        .saturating_sub(1)
+                } else {
+                    preferred_col.min(
+                        editor
+                            .lines
+                            .len_col(editor.cursor.row)
+                            .unwrap_or_default()
+                            .saturating_sub(1),
+                    )
+                };
                 editor.preferred_col = Some(preferred_col);
                 self.lookup.clear();
                 self.state.clear();
@@ -194,8 +213,17 @@ impl VimCommandContext<'_> {
                 MotionKind::LineEnd | MotionKind::Up | MotionKind::Down | MotionKind::FirstRow | MotionKind::LastRow
             ) {
                 editor.preferred_col = preferred_col;
+            } else if motion == MotionKind::Right
+                && destination == editor.cursor
+                && editor.lines.len_col(editor.cursor.row).unwrap_or_default() == 1
+                && editor.cursor.row + 1 < editor.lines.len()
+            {
+                if self.state.command_count() > 1 {
+                    editor.vim_failed_right_col = Some(editor.cursor.col + self.state.command_count());
+                }
             } else {
                 editor.preferred_col = None;
+                editor.vim_failed_right_col = None;
             }
 
             editor.clamp_column();
@@ -285,6 +313,7 @@ impl VimCommandContext<'_> {
         let count = self.take_command_count();
         if let Some(motion_kind) = char_motion_kind(motion) {
             if let Some(range) = vim_motion::char_motion_range(editor, motion_kind, target, count) {
+                editor.preferred_col = None;
                 editor.cursor = if matches!(motion, 'F' | 'T') {
                     range.start
                 } else {
@@ -425,6 +454,7 @@ impl VimCommandContext<'_> {
                             .unwrap_or(1)
                             .saturating_sub(1);
                     }
+                    editor.vim_pending_undo_cursor = None;
                     editor.capture_with_cursor(range.start);
                     let redo_cursor = if range.start.row == range.end.row
                         && range.start.col > 0
@@ -458,7 +488,9 @@ impl VimCommandContext<'_> {
                             .is_some_and(|len| len > 0));
                 if should_enter_insert {
                     editor.capture_with_cursor(editor.cursor);
-                    if !editor.lines.iter_row().any(|row| !row.is_empty()) {
+                    if !editor.lines.iter_row().any(|row| !row.is_empty())
+                        && editor.lines.iter_row().count() <= 1
+                    {
                         editor.lines = crate::Lines::from("");
                         editor.cursor = crate::Index2::new(0, 0);
                     }
