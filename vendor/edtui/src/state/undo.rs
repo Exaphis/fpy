@@ -126,7 +126,11 @@ impl EditorState {
     }
 
     pub fn redo(&mut self) {
-        if let Some(prev) = self.redo.pop() {
+        let Some(prev) = self.redo.pop() else {
+            self.preferred_col = Some(self.cursor.col);
+            return;
+        };
+        {
             let current = UndoState {
                 lines: self.lines.clone(),
                 cursor: self.cursor,

@@ -132,12 +132,10 @@ fn next_nonempty_line_len(state: &EditorState) -> Option<usize> {
 }
 
 fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> {
-    use crate::actions::{
-        Execute, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp, MoveWordForward,
-    };
+    use crate::actions::{Execute, MoveBigWordForwardToEndOfWord, MoveDown, MoveUp};
 
     match motion {
-        MotionKind::WordForward => MoveWordForward(1).execute(state),
+        MotionKind::WordForward => move_word_forward_once(state),
         MotionKind::WordEnd => move_word_end_once(state),
         MotionKind::WordBackward => move_word_backward_once(state),
         MotionKind::BigWordForward => move_big_word_forward_once(state),
@@ -180,6 +178,26 @@ fn apply_motion_once(state: &mut EditorState, motion: MotionKind) -> Option<()> 
         }
     }
     Some(())
+}
+
+fn move_word_forward_once(state: &mut EditorState) {
+    use crate::actions::{Execute, MoveWordForward};
+
+    let start = state.cursor;
+    MoveWordForward(1).execute(state);
+    if state.cursor.row > start.row
+        && state.lines.iter_row().nth(state.cursor.row).is_some_and(|line| {
+            !line.is_empty() && line.iter().all(|ch| ch.is_ascii_whitespace())
+        })
+    {
+        state.cursor.col = start.col.min(
+            state
+                .lines
+                .len_col(state.cursor.row)
+                .unwrap_or_default()
+                .saturating_sub(1),
+        );
+    }
 }
 
 fn first_non_whitespace_col_or_last_blank(lines: &crate::Lines, row: usize) -> usize {
@@ -315,6 +333,7 @@ fn move_big_word_forward_once(state: &mut EditorState) {
     use crate::actions::{Execute, MoveBigWordForward};
 
     let start_row = state.cursor.row;
+    let start_col = state.cursor.col;
     MoveBigWordForward(1).execute(state);
     if state.cursor.row <= start_row {
         return;
@@ -324,6 +343,20 @@ fn move_big_word_forward_once(state: &mut EditorState) {
             state.preferred_col = None;
             state.cursor.row = row;
             state.cursor.col = 0;
+            return;
+        }
+        if state.lines.iter_row().nth(row).is_some_and(|line| {
+            !line.is_empty() && line.iter().all(|ch| ch.is_ascii_whitespace())
+        }) {
+            state.preferred_col = None;
+            state.cursor.row = row;
+            state.cursor.col = start_col.min(
+                state
+                    .lines
+                    .len_col(row)
+                    .unwrap_or_default()
+                    .saturating_sub(1),
+            );
             return;
         }
     }

@@ -75,7 +75,8 @@ impl VimCommandContext<'_> {
                 editor.undo();
                 editor.vim_after_redo = false;
             }
-            (input::KeyCode::Char('r'), input::Modifiers::CONTROL) => {
+            (input::KeyCode::Char('r'), input::Modifiers::CONTROL)
+            | (input::KeyCode::Char('r'), input::Modifiers::ALT) => {
                 editor.redo();
                 editor.vim_after_redo = true;
             }

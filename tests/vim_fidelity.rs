@@ -888,6 +888,7 @@ fn parse_keys(keys: &str) -> Vec<KeyInput> {
                 "BS" => out.push(KeyInput::new(crossterm::event::KeyCode::Backspace)),
                 "Tab" => out.push(KeyInput::new(crossterm::event::KeyCode::Tab)),
                 "C-r" => out.push(KeyInput::ctrl('r')),
+                "A-r" => out.push(KeyInput::alt('r')),
                 "lt" => out.push(KeyInput::new('<')),
                 other => panic!("unsupported key token <{other}>"),
             }
@@ -921,6 +922,7 @@ fn neovim_normal_execute_arg(keys: &str) -> String {
                     "BS" => out.push_str("\\<BS>"),
                     "Tab" => out.push_str("\\<Tab>"),
                     "C-r" => out.push_str("\\<C-r>"),
+                    "A-r" => out.push_str("\\<C-r>"),
                     "lt" => out.push('<'),
                     other => panic!("unsupported key token <{other}>"),
                 }
