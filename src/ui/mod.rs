@@ -366,6 +366,8 @@ pub struct AppUi {
     terminal: Option<DefaultTerminal>,
     events: EventStream,
     current_pane: Rect,
+    last_screen_size: (u16, u16),
+    transcript_log: Vec<String>,
     pane_top: u16,
     editor: EditorController,
     palette_open: bool,
@@ -411,6 +413,8 @@ impl AppUi {
             terminal: Some(terminal),
             events: EventStream::new(),
             current_pane: pane,
+            last_screen_size: (width, height),
+            transcript_log: Vec::new(),
             pane_top,
             editor: EditorController::new(),
             palette_open: false,
@@ -552,9 +556,11 @@ impl AppUi {
 
     pub fn insert_transcript(&mut self, text: impl Into<String>) -> Result<()> {
         self.sync_viewport()?;
+        let text = text.into();
+        self.transcript_log.push(text.clone());
         let new_pane = {
             let terminal = self.terminal_mut()?;
-            insert_history_text(terminal, &text.into())?;
+            insert_history_text(terminal, &text)?;
             terminal.viewport_area()
         };
         self.current_pane = new_pane;
@@ -1220,19 +1226,58 @@ impl AppUi {
 
     fn sync_viewport(&mut self) -> Result<()> {
         let (width, height) = terminal::size()?;
+        let screen_resized = self.last_screen_size != (width, height);
         let pane_height = self.pane_height().min(height.max(1));
         let pane_top = self.pane_top.min(max_pane_top(height, pane_height));
         let pane = pane_rect_at(width, height, pane_top, pane_height);
-        if pane != self.current_pane {
-            self.scroll_history_for_pane_growth(self.current_pane, pane, height)?;
-            self.clear_stale_pane_rows(self.current_pane, pane)?;
-            let terminal = self.terminal_mut()?;
-            terminal.set_viewport_area(pane);
-            terminal.invalidate_viewport();
-            self.current_pane = pane;
-            self.pane_top = pane.y;
+        if pane != self.current_pane || screen_resized {
+            let old_pane = self.current_pane;
+            if screen_resized {
+                self.replay_transcript_after_resize(width, height, pane_height)?;
+            } else {
+                self.scroll_history_for_pane_growth(old_pane, pane, height)?;
+                self.clear_stale_pane_rows(old_pane, pane)?;
+                let terminal = self.terminal_mut()?;
+                terminal.set_viewport_area(pane);
+                terminal.invalidate_viewport();
+                self.current_pane = pane;
+                self.pane_top = pane.y;
+            }
+            self.last_screen_size = (width, height);
             self.dirty = true;
         }
+        Ok(())
+    }
+
+    fn replay_transcript_after_resize(
+        &mut self,
+        width: u16,
+        height: u16,
+        pane_height: u16,
+    ) -> Result<()> {
+        self.reset_scroll_region()?;
+        self.clear_visible_screen_and_scrollback()?;
+        let initial_pane = pane_rect_at(width, height, 0, pane_height);
+        {
+            let terminal = self.terminal_mut()?;
+            terminal.set_viewport_area(initial_pane);
+            terminal.invalidate_viewport();
+        }
+        self.current_pane = initial_pane;
+        self.pane_top = initial_pane.y;
+
+        for text in self.transcript_log.clone() {
+            let new_pane = {
+                let terminal = self.terminal_mut()?;
+                insert_history_text(terminal, &text)?;
+                terminal.viewport_area()
+            };
+            self.current_pane = new_pane;
+            self.pane_top = new_pane.y;
+        }
+
+        self.clear_current_pane_rows()?;
+        self.terminal_mut()?.invalidate_viewport();
         Ok(())
     }
 
@@ -1312,6 +1357,22 @@ impl AppUi {
                 execute!(handle, MoveTo(0, row), Clear(ClearType::UntilNewLine))?;
             }
         }
+        Ok(())
+    }
+
+    fn reset_scroll_region(&mut self) -> Result<()> {
+        let terminal = self.terminal_mut()?;
+        let handle = terminal.backend_mut();
+        write!(handle, "\x1b[r")?;
+        handle.flush()?;
+        Ok(())
+    }
+
+    fn clear_visible_screen_and_scrollback(&mut self) -> Result<()> {
+        let terminal = self.terminal_mut()?;
+        let handle = terminal.backend_mut();
+        write!(handle, "\x1b[?2026h\x1b[2J\x1b[H\x1b[3J\x1b[?2026l")?;
+        handle.flush()?;
         Ok(())
     }
 

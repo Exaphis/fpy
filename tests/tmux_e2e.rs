@@ -575,6 +575,54 @@ fn vim_open_below_grows_on_first_try() {
 }
 
 #[test]
+fn repeated_resize_preserves_transcript_and_keeps_inline_prompt_clean() {
+    let Some(output) = run_repro(
+        "resize-cycle",
+        "resize-cycle",
+        &[
+            ("TMUX_SIZE", "120x30"),
+            ("PRE_INPUT", "1+1\n2+2"),
+            ("INPUTS", "1+1\n2+2"),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "120"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "In [1]: 1+1");
+    assert_contains(&output.after, "Out[1]: 2");
+    assert_contains(&output.after, "In [2]: 2+2");
+    assert_contains(&output.after, "Out[2]: 4");
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
+    assert_line_contains_all(&output.after, &["resize_check"]);
+    assert_line_contains_all(&output.after, &["INS", "In [3]", "Ctrl-P palette"]);
+    assert_not_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
+}
+
+#[test]
+fn repeated_resize_with_palette_open_stays_clean() {
+    let Some(output) = run_repro(
+        "resize-palette-cycle",
+        "resize-palette-cycle",
+        &[
+            ("TMUX_SIZE", "120x30"),
+            ("PRE_INPUT", "1+1"),
+            ("INPUTS", "1+1"),
+            ("EXIT_WAIT", "1"),
+            ("CAPTURE_LINES", "120"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_line_count(&output.after, "Command Palette", 1);
+    assert_line_count(&output.after, "Interrupt Kernel", 1);
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
+    assert_not_contains(&output.after, "Kernel busy. Ctrl-C to interrupt");
+}
+
+#[test]
 fn history_up_reruns_previous_cell() {
     let Some(output) = run_repro(
         "history-up",

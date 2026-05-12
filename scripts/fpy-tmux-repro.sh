@@ -394,6 +394,42 @@ case "$ACTION" in
     sleep 0.1
     tmux send-keys -t "$SESSION" o
     ;;
+  resize-cycle)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -l "resize_check"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 90 -y 24
+    wait_for_text "$SESSION" "Ctrl-P palette" "resize-90x24"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 132 -y 36
+    wait_for_text "$SESSION" "Ctrl-P palette" "resize-132x36"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 74 -y 18
+    wait_for_text "$SESSION" "Ctrl-P palette" "resize-74x18"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 120 -y 30
+    wait_for_text "$SESSION" "Ctrl-P palette" "resize-120x30"
+    sleep 0.2
+    ;;
+  resize-palette-cycle)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -l "palette_resize_check"
+    tmux send-keys -t "$SESSION" C-p
+    wait_for_text "$SESSION" "Interrupt Kernel" "palette-open"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 90 -y 24
+    wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-90x24"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 132 -y 36
+    wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-132x36"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 74 -y 18
+    wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-74x18"
+    sleep 0.1
+    tmux resize-window -t "$SESSION" -x 120 -y 30
+    wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-120x30"
+    sleep 0.2
+    ;;
   ctrl-l)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-l
