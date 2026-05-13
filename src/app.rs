@@ -37,6 +37,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     let (bootstrap_task, mut bootstrap_rx) = start_bootstrap(cli)?;
     let mut ui = AppUi::new("starting".to_string())?;
     ui.load_history(loaded_history);
+    ui.insert_transcript(format!("fpy {}", env!("CARGO_PKG_VERSION")))?;
     for warning in history_warnings {
         ui.insert_transcript(format!("warning: {warning}"))?;
     }

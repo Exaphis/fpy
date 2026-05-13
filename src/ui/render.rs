@@ -14,9 +14,7 @@ const PALETTE_HEIGHT: u16 = 6;
 const EDITOR_STATUS_HEIGHT: u16 = 1;
 
 pub(super) fn initial_pane_top() -> u16 {
-    position()
-        .map(|(_, row)| row.saturating_add(1))
-        .unwrap_or(0)
+    position().map(|(_, row)| row).unwrap_or(0)
 }
 
 pub(super) fn build_terminal(pane: Rect) -> Result<DefaultTerminal> {
