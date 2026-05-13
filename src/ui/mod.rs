@@ -190,9 +190,38 @@ impl EditorController {
         text
     }
 
+    fn text(&self) -> String {
+        self.editor.lines.to_string()
+    }
+
     fn cursor_byte(&self) -> usize {
-        let text = self.editor.lines.to_string();
+        let text = self.text();
         cursor_to_byte(&text, self.editor.cursor)
+    }
+
+    fn ghost_suggestion_suffix(&self) -> Option<String> {
+        if self.editor.mode != EditorMode::Insert {
+            return None;
+        }
+        let text = self.text();
+        if text.is_empty() || self.cursor_byte() != text.len() {
+            return None;
+        }
+        let line_prefix = text
+            .rsplit_once('\n')
+            .map_or(text.as_str(), |(_, line)| line);
+        self.history.iter().rev().find_map(|entry| {
+            history_suggestion_suffix_for_line_prefix(entry, line_prefix).map(str::to_owned)
+        })
+    }
+
+    fn accept_ghost_suggestion(&mut self) -> bool {
+        let Some(suffix) = self.ghost_suggestion_suffix() else {
+            return false;
+        };
+        let text = format!("{}{}", self.text(), suffix);
+        self.set_text(&text);
+        true
     }
 
     fn set_text_and_cursor_byte(&mut self, text: &str, cursor_byte: usize) {
@@ -382,6 +411,7 @@ pub struct AppUi {
     throbber_state: ThrobberState,
     session_ready: bool,
     last_overlay_kind: OverlayKind,
+    exit_confirmation_pending: bool,
     status_row_dirty: bool,
     dirty: bool,
     restored: bool,
@@ -429,6 +459,7 @@ impl AppUi {
             throbber_state: ThrobberState::default(),
             session_ready: false,
             last_overlay_kind: OverlayKind::None,
+            exit_confirmation_pending: false,
             status_row_dirty: false,
             dirty: true,
             restored: false,
@@ -740,6 +771,23 @@ impl AppUi {
                             .syntax_highlighter(editor_syntax_highlighter())
                             .single_line(false);
                         frame.render_widget(editor_view, content_area);
+                        if let Some(suffix) = editor.ghost_suggestion_suffix()
+                            && let Some(cursor) = editor.editor.cursor_screen_position()
+                        {
+                            let ghost_area = Rect::new(
+                                cursor.x,
+                                cursor.y,
+                                content_area.right().saturating_sub(cursor.x),
+                                1,
+                            );
+                            if ghost_area.width > 0 {
+                                frame.render_widget(
+                                    Paragraph::new(suffix)
+                                        .style(Style::default().fg(Color::DarkGray)),
+                                    ghost_area,
+                                );
+                            }
+                        }
 
                         let gutter_lines = editor_gutter_lines(
                             awaiting_input.as_ref(),
@@ -755,11 +803,15 @@ impl AppUi {
                 if overlay_kind == OverlayKind::HistorySearch {
                     render_history_search_status(frame, status_area);
                 } else if let Some(throbber) = status_throbber(status) {
-                    let status_detail = status_label(
-                        awaiting_input.as_ref(),
-                        &prompt_label,
-                        editor.history_position(),
-                    );
+                    let status_detail = if self.exit_confirmation_pending {
+                        Some("press Ctrl-D again to exit".to_string())
+                    } else {
+                        status_label(
+                            awaiting_input.as_ref(),
+                            &prompt_label,
+                            editor.history_position(),
+                        )
+                    };
                     let prefix_width =
                         editor_status_prefix_width(editor.mode(), status_detail.as_deref());
                     let runtime_label = busy_runtime_label.as_deref();
@@ -818,11 +870,15 @@ impl AppUi {
                     frame.render_widget(Paragraph::new(""), filler_area);
                     frame.render_widget(editor_palette_hint(), palette_hint_area);
                 } else {
-                    let status_detail = status_label(
-                        awaiting_input.as_ref(),
-                        &prompt_label,
-                        editor.history_position(),
-                    );
+                    let status_detail = if self.exit_confirmation_pending {
+                        Some("press Ctrl-D again to exit".to_string())
+                    } else {
+                        status_label(
+                            awaiting_input.as_ref(),
+                            &prompt_label,
+                            editor.history_position(),
+                        )
+                    };
                     let prefix_width =
                         editor_status_prefix_width(editor.mode(), status_detail.as_deref());
                     let palette_hint_width = editor_palette_hint_width();
@@ -897,6 +953,21 @@ impl AppUi {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<UiAction> {
+        let is_empty_ctrl_d = matches!(
+            key,
+            KeyEvent {
+                code: KeyCode::Char('d'),
+                modifiers,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL)
+                && self.editor_enabled()
+                && !self.editor.awaiting_input()
+                && self.editor.is_empty()
+        );
+        if !is_empty_ctrl_d {
+            self.exit_confirmation_pending = false;
+        }
+
         if self.history_search.open {
             return self.handle_history_search_key(key);
         }
@@ -944,7 +1015,12 @@ impl AppUi {
                 && !self.editor.awaiting_input()
                 && self.editor.is_empty() =>
             {
-                Some(UiAction::Exit)
+                if self.exit_confirmation_pending {
+                    Some(UiAction::Exit)
+                } else {
+                    self.exit_confirmation_pending = true;
+                    None
+                }
             }
             KeyEvent {
                 code: KeyCode::Char('l'),
@@ -977,6 +1053,26 @@ impl AppUi {
                 code: KeyCode::Tab, ..
             } if self.editor_enabled() && self.editor.mode() == EditorMode::Insert => {
                 self.editor.insert_indent();
+                None
+            }
+            KeyEvent {
+                code: KeyCode::Right,
+                modifiers,
+                ..
+            } if self.editor_enabled()
+                && modifiers.is_empty()
+                && self.editor.accept_ghost_suggestion() =>
+            {
+                None
+            }
+            KeyEvent {
+                code: KeyCode::Char('f'),
+                modifiers,
+                ..
+            } if self.editor_enabled()
+                && modifiers.contains(KeyModifiers::CONTROL)
+                && self.editor.accept_ghost_suggestion() =>
+            {
                 None
             }
             KeyEvent {
@@ -1757,6 +1853,16 @@ fn history_search_layout_for_popup(
     (results_height, preview_height)
 }
 
+fn history_suggestion_suffix_for_line_prefix<'a>(entry: &'a str, prefix: &str) -> Option<&'a str> {
+    if prefix.is_empty() {
+        return None;
+    }
+    entry.lines().find_map(|line| {
+        line.strip_prefix(prefix)
+            .filter(|suffix| !suffix.is_empty())
+    })
+}
+
 fn normalize_history_search_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -1883,6 +1989,30 @@ mod tests {
                 .iter()
                 .flat_map(|line| line.spans.iter())
                 .any(|span| span.style.fg.is_some())
+        );
+    }
+
+    #[test]
+    fn ghost_suggestion_matches_line_suffixes_only() {
+        assert_eq!(
+            history_suggestion_suffix_for_line_prefix("print('hello')", "pri"),
+            Some("nt('hello')")
+        );
+        assert_eq!(
+            history_suggestion_suffix_for_line_prefix("def foo():\n    pass", "def foo"),
+            Some("():")
+        );
+        assert_eq!(
+            history_suggestion_suffix_for_line_prefix("x = 1\nprint(x)", "pri"),
+            Some("nt(x)")
+        );
+        assert_eq!(
+            history_suggestion_suffix_for_line_prefix("print('hello')", ""),
+            None
+        );
+        assert_eq!(
+            history_suggestion_suffix_for_line_prefix("print('hello')", "zzz"),
+            None
         );
     }
 }

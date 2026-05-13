@@ -119,6 +119,15 @@ fn ctrl_d_preserves_transcript() {
 }
 
 #[test]
+fn ctrl_d_requires_confirmation() {
+    let Some(output) = run_repro("ctrl-d-confirmation", "ctrl-d-confirmation", &[]) else {
+        return;
+    };
+    assert_contains(&output.after, "press Ctrl-D again to exit");
+    assert_contains(&output.after, "Ctrl-P palette");
+}
+
+#[test]
 fn kernel_exit_returns_shell() {
     let Some(output) = run_repro("kernel-exit", "exitpy", &[]) else {
         return;

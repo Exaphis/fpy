@@ -516,6 +516,13 @@ case "$ACTION" in
   ctrl-d)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" C-d
+    sleep 0.1
+    tmux send-keys -t "$SESSION" C-d
+    ;;
+  ctrl-d-confirmation)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" C-d
+    wait_for_text "$SESSION" "press Ctrl-D again to exit" "ctrl-d-confirmation"
     ;;
   exitpy)
     wait_for_submit_ready "$SESSION"
