@@ -419,6 +419,9 @@ fn handle_kernel_event(
                 .unwrap_or_else(|| "Out[?]".to_string());
             ui.insert_transcript(format!("{prompt}: {text}"))?;
         }
+        KernelEvent::Pager { text } => {
+            ui.insert_transcript(text)?;
+        }
         KernelEvent::Stream { text } => {
             ui.insert_transcript(text)?;
         }
@@ -525,7 +528,7 @@ async fn handle_ready_ui_action(
         }
         UiAction::Interrupt => {
             match kernel.interrupt() {
-                Ok(()) => ui.insert_transcript("interrupt sent")?,
+                Ok(()) => ui.insert_transcript("^C")?,
                 Err(error) => ui.insert_transcript(format!("interrupt unavailable: {error}"))?,
             }
             Ok(false)

@@ -999,11 +999,13 @@ impl AppUi {
             } if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.editor.awaiting_input() {
                     Some(UiAction::Interrupt)
-                } else if self.submit_ready() {
+                } else if self.editor_enabled() && !self.editor.is_empty() {
                     let _ = self.clear_editor_view();
                     None
-                } else {
+                } else if self.status == KernelStatus::Busy {
                     Some(UiAction::Interrupt)
+                } else {
+                    None
                 }
             }
             KeyEvent {

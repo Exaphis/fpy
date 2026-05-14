@@ -128,6 +128,25 @@ fn ctrl_d_requires_confirmation() {
 }
 
 #[test]
+fn question_mark_introspection_displays_help() {
+    let Some(output) = run_repro(
+        "question-mark-introspection",
+        "none",
+        &[("INPUTS", "len?\nlen??"), ("CAPTURE_LINES", "160")],
+    ) else {
+        return;
+    };
+    assert_contains(&output.after, "In [1]: len?");
+    assert_contains(&output.after, "In [2]: len??");
+    assert_contains(&output.after, "Signature: len(obj, /)");
+    assert_contains(
+        &output.after,
+        "Docstring: Return the number of items in a container.",
+    );
+    assert_not_contains(&output.after, "Out[?]:");
+}
+
+#[test]
 fn kernel_exit_returns_shell() {
     let Some(output) = run_repro("kernel-exit", "exitpy", &[]) else {
         return;

@@ -15,7 +15,7 @@ pub(super) fn shell_message_to_events(message: WireMessage) -> Vec<KernelEvent> 
                 .unwrap_or("connected");
             vec![KernelEvent::Info(banner.to_string())]
         }
-        "execute_reply" => Vec::new(),
+        "execute_reply" => execute_reply_payload_events(&message.content),
         "shutdown_reply" => vec![KernelEvent::Status(KernelStatus::Disconnected)],
         _ => Vec::new(),
     }
@@ -105,6 +105,26 @@ pub(super) fn stdin_message_to_events(message: WireMessage) -> Vec<KernelEvent> 
         }],
         _ => Vec::new(),
     }
+}
+
+fn execute_reply_payload_events(content: &Value) -> Vec<KernelEvent> {
+    content
+        .get("payload")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|payload| payload.get("source").and_then(Value::as_str) == Some("page"))
+        .filter_map(|payload| {
+            let data = payload.get("data")?;
+            let text = data
+                .get("text/plain")
+                .and_then(Value::as_str)
+                .or_else(|| data.as_str())?;
+            Some(KernelEvent::Pager {
+                text: text.to_string(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn pick_text_payload(content: &Value) -> Option<String> {
@@ -210,5 +230,25 @@ mod tests {
             events.as_slice(),
             [KernelEvent::Status(KernelStatus::Disconnected)]
         ));
+    }
+
+    #[test]
+    fn maps_execute_reply_page_payloads_to_results() {
+        let events = shell_message_to_events(wire_message(
+            "execute_reply",
+            json!({
+                "payload": [{
+                    "source": "page",
+                    "data": {"text/plain": "Signature: len(obj, /)"}
+                }]
+            }),
+        ));
+
+        match events.as_slice() {
+            [KernelEvent::Pager { text }] => {
+                assert_eq!(text, "Signature: len(obj, /)");
+            }
+            _ => panic!("unexpected events: {events:?}"),
+        }
     }
 }

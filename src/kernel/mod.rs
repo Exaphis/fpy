@@ -41,6 +41,9 @@ pub enum KernelEvent {
         execution_count: Option<u32>,
         text: String,
     },
+    Pager {
+        text: String,
+    },
     Stream {
         text: String,
     },
