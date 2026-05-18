@@ -223,6 +223,9 @@ async fn spawn_kernel(launch: &LaunchConfig) -> Result<LocalKernel> {
                 .context("failed to open kernel startup log")?,
         ))
         .kill_on_drop(true);
+    command
+        .env("FPY_FRONTEND", "terminal")
+        .env("FPY_VERSION", env!("CARGO_PKG_VERSION"));
     if let Some(value) = default_pydevd_disable_file_validation_env() {
         command.env("PYDEVD_DISABLE_FILE_VALIDATION", value);
     }
