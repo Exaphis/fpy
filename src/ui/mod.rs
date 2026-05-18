@@ -19,7 +19,12 @@ use crossterm::{
 use edtui::{
     EditorEventHandler, EditorMode, EditorState, EditorView, Index2,
     actions::{Chainable, InsertChar, LineBreak, SwitchMode},
-    syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet},
+    syntect::{
+        easy::HighlightLines,
+        highlighting::ThemeSet,
+        parsing::SyntaxSet,
+        util::LinesWithEndings,
+    },
 };
 use futures::StreamExt;
 use nucleo::{
@@ -1768,28 +1773,32 @@ fn syntax_highlighted_history_preview(code: &str) -> Vec<Line<'static>> {
         return plain_history_preview(code);
     };
     let mut highlighter = HighlightLines::new(syntax, theme);
-    let lines = code.split('\n');
     let mut highlighted = Vec::new();
 
-    for line in lines {
+    for line in LinesWithEndings::from(code) {
+        let display_line = line.trim_end_matches(['\r', '\n']);
         match highlighter.highlight_line(line, &HISTORY_SEARCH_SYNTAX_SET) {
             Ok(ranges) => {
                 let spans = ranges
                     .into_iter()
-                    .map(|(style, text)| {
-                        Span::styled(
+                    .filter_map(|(style, text)| {
+                        let text = text.trim_end_matches(['\r', '\n']);
+                        if text.is_empty() {
+                            return None;
+                        }
+                        Some(Span::styled(
                             text.to_string(),
                             Style::default().fg(Color::Rgb(
                                 style.foreground.r,
                                 style.foreground.g,
                                 style.foreground.b,
                             )),
-                        )
+                        ))
                     })
                     .collect::<Vec<_>>();
                 highlighted.push(Line::from(spans));
             }
-            Err(_) => highlighted.push(Line::raw(line.to_string())),
+            Err(_) => highlighted.push(Line::raw(display_line.to_string())),
         }
     }
 
@@ -1992,6 +2001,15 @@ mod tests {
                 .flat_map(|line| line.spans.iter())
                 .any(|span| span.style.fg.is_some())
         );
+    }
+
+    #[test]
+    fn history_search_preview_resets_line_comments() {
+        let lines = syntax_highlighted_history_preview("# comment\nx = 1");
+
+        let comment_color = lines[0].spans[0].style.fg;
+        let code_color = lines[1].spans[0].style.fg;
+        assert_ne!(comment_color, code_color);
     }
 
     #[test]
