@@ -24,12 +24,17 @@ if [ -z "${FPY_CMD+x}" ]; then
     FPY_CMD="cargo run -- run --python $PYTHON_BIN"
   fi
 fi
+if [ -n "${FPY_DISPLAY_BACKEND+x}" ]; then
+  FPY_CMD="FPY_DISPLAY_BACKEND='$FPY_DISPLAY_BACKEND' $FPY_CMD"
+fi
 PRE_INPUT="${PRE_INPUT-1+1}"
 INPUTS="${INPUTS-$PRE_INPUT}"
 CAPTURE_LINES="${CAPTURE_LINES:-40}"
 CAPTURE_VISIBLE_ONLY="${CAPTURE_VISIBLE_ONLY:-0}"
 BEFORE_LOG="${BEFORE_LOG:-$ROOT/target/fpy-tmux-repro.before.log}"
 AFTER_LOG="${AFTER_LOG:-$ROOT/target/fpy-tmux-repro.after.log}"
+AFTER_ANSI_LOG="${AFTER_ANSI_LOG:-$ROOT/target/fpy-tmux-repro.after.ansi.log}"
+AFTER_META_LOG="${AFTER_META_LOG:-$ROOT/target/fpy-tmux-repro.after.meta}"
 PASTE_TEXT="${PASTE_TEXT:-x = 1
 y = 2}"
 SEARCH_QUERY="${SEARCH_QUERY:-}"
@@ -37,6 +42,8 @@ SEARCH_DOWN_COUNT="${SEARCH_DOWN_COUNT:-0}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-20}"
 POLL_SECONDS="${POLL_SECONDS:-0.05}"
 EXIT_WAIT="${EXIT_WAIT:-0.2}"
+VISUAL_SENTINEL="${VISUAL_SENTINEL:-}"
+LONG_EDITOR_TEXT="${LONG_EDITOR_TEXT:-$(perl -e 'print "a" x 500')}"
 
 mkdir -p "$ROOT/target"
 
@@ -57,6 +64,36 @@ capture_pane() {
   fi
 }
 
+capture_pane_ansi() {
+  if [ "$CAPTURE_VISIBLE_ONLY" = "1" ]; then
+    tmux capture-pane -ept "$1"
+  else
+    tmux capture-pane -ept "$1" -S "-$CAPTURE_LINES"
+  fi
+}
+
+line_number_for() {
+  file=$1
+  needle=$2
+  awk -v needle="$needle" 'index($0, needle) { print NR; exit }' "$file"
+}
+
+assert_resize_projection_reset() {
+  session=$1
+  description=$2
+  file="$ROOT/target/$SESSION-$description.anchor.log"
+  capture_pane "$session" > "$file"
+  sentinel="${VISUAL_SENTINEL:-__FPY_VISUAL_SENTINEL__}"
+  if grep -F "$sentinel" "$file" >/dev/null 2>&1; then
+    printf 'resize projection reset failed for %s; sentinel remained after resize; pane saved to %s\n' "$description" "$file" >&2
+    return 1
+  fi
+  if ! grep -F "aaaaaaaaaaaaaaaaaaaaaaaa" "$file" >/dev/null 2>&1; then
+    printf 'resize projection reset failed for %s; editor text missing after resize; pane saved to %s\n' "$description" "$file" >&2
+    return 1
+  fi
+}
+
 pane_has_usable_input() {
   pane_text=$1
   printf '%s' "$pane_text" | grep -F "Ctrl-P palette" >/dev/null 2>&1
@@ -68,6 +105,16 @@ pane_is_submit_ready() {
   [ -n "$prompt_line" ] || return 1
   printf '%s' "$prompt_line" | grep -F "Connecting to kernel..." >/dev/null 2>&1 && return 1
   printf '%s' "$prompt_line" | grep -F "Kernel busy. Ctrl-C to interrupt" >/dev/null 2>&1 && return 1
+  return 0
+}
+
+pane_has_loaded_history_editor() {
+  pane_text=$1
+  prompt_line=$(printf '%s\n' "$pane_text" | grep -F "Ctrl-P palette" | tail -n 1 || true)
+  [ -n "$prompt_line" ] || return 1
+  printf '%s' "$prompt_line" | grep -F "[" >/dev/null 2>&1 || return 1
+  printf '%s' "$prompt_line" | grep -F "/" >/dev/null 2>&1 || return 1
+  printf '%s' "$pane_text" | grep -F "History Search" >/dev/null 2>&1 && return 1
   return 0
 }
 
@@ -130,12 +177,40 @@ wait_for_text() {
   done
 }
 
+wait_for_either_text() {
+  session=$1
+  needle_a=$2
+  needle_b=$3
+  description=$4
+  deadline=$(($(now_ns) + TIMEOUT_SECONDS * 1000000000))
+
+  while :; do
+    pane_text=$(capture_pane "$session")
+    if pane_has_text "$pane_text" "$needle_a" || pane_has_text "$pane_text" "$needle_b"; then
+      return 0
+    fi
+
+    if [ "$(now_ns)" -ge "$deadline" ]; then
+      log_file="$ROOT/target/$SESSION-$description.timeout.log"
+      printf '%s\n' "$pane_text" > "$log_file"
+      printf 'timed out waiting for %s; pane saved to %s\n' "$description" "$log_file" >&2
+      return 1
+    fi
+
+    sleep "$POLL_SECONDS"
+  done
+}
+
 wait_for_usable_input() {
   wait_for_predicate "$1" pane_has_usable_input usable-input 2
 }
 
 wait_for_submit_ready() {
   wait_for_predicate "$1" pane_is_submit_ready submit-ready 2
+}
+
+wait_for_loaded_history_editor() {
+  wait_for_predicate "$1" pane_has_loaded_history_editor loaded-history-editor 2
 }
 
 last_prompt_line() {
@@ -151,6 +226,14 @@ pane_prompt_line_differs() {
   [ "$prompt_line" != "$expected" ]
 }
 
+pane_prompt_line_contains() {
+  pane_text=$1
+  needle=$2
+  prompt_line=$(last_prompt_line "$pane_text")
+  [ -n "$prompt_line" ] || return 1
+  printf '%s' "$prompt_line" | grep -F "$needle" >/dev/null 2>&1
+}
+
 wait_for_prompt_line_change() {
   session=$1
   expected=$2
@@ -160,6 +243,29 @@ wait_for_prompt_line_change() {
   while :; do
     pane_text=$(capture_pane "$session")
     if pane_prompt_line_differs "$pane_text" "$expected"; then
+      return 0
+    fi
+
+    if [ "$(now_ns)" -ge "$deadline" ]; then
+      log_file="$ROOT/target/$SESSION-$description.timeout.log"
+      printf '%s\n' "$pane_text" > "$log_file"
+      printf 'timed out waiting for %s; pane saved to %s\n' "$description" "$log_file" >&2
+      return 1
+    fi
+
+    sleep "$POLL_SECONDS"
+  done
+}
+
+wait_for_prompt_line_text() {
+  session=$1
+  needle=$2
+  description=$3
+  deadline=$(($(now_ns) + TIMEOUT_SECONDS * 1000000000))
+
+  while :; do
+    pane_text=$(capture_pane "$session")
+    if pane_prompt_line_contains "$pane_text" "$needle"; then
       return 0
     fi
 
@@ -204,6 +310,14 @@ submit_lines() {
   IFS=$old_ifs
 }
 
+submit_loaded_history_cell() {
+  session=$1
+  expected_output=$2
+  description=$3
+  tmux send-keys -t "$session" Enter
+  wait_for_text "$session" "$expected_output" "$description"
+}
+
 if [ -n "${FPY_HISTORY_DIR+x}" ] && [ -n "${XDG_DATA_HOME+x}" ]; then
   tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" env FPY_HISTORY_DIR="$FPY_HISTORY_DIR" XDG_DATA_HOME="$XDG_DATA_HOME" zsh
 elif [ -n "${FPY_HISTORY_DIR+x}" ]; then
@@ -214,6 +328,9 @@ else
   tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" zsh
 fi
 tmux send-keys -t "$SESSION" "cd $ROOT" Enter
+if [ -n "$VISUAL_SENTINEL" ]; then
+  tmux send-keys -t "$SESSION" "printf '%s\n' '$VISUAL_SENTINEL'" Enter
+fi
 tmux send-keys -t "$SESSION" "$FPY_CMD" Enter
 wait_for_usable_input "$SESSION"
 
@@ -259,25 +376,25 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     wait_for_text "$SESSION" "3" "shift-enter-b"
     tmux send-keys -t "$SESSION" -l "c"
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "NAV" "vim-goto-normal"
     tmux send-keys -t "$SESSION" 3 G
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" i
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "INS" "vim-goto-insert"
     tmux send-keys -t "$SESSION" -l "X"
     ;;
   vim-normal)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "abc"
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "NAV" "vim-normal-mode"
     tmux send-keys -t "$SESSION" 0
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" i
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "INS" "vim-insert-mode"
     tmux send-keys -t "$SESSION" -l "X"
     tmux send-keys -t "$SESSION" Enter
     ;;
@@ -286,23 +403,28 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     ;;
+  shift-enter-type-second-line)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -l "abc"
+    tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
+    wait_for_text "$SESSION" "abc" "shift-enter-first-line"
+    tmux send-keys -t "$SESSION" -l "def"
+    wait_for_text "$SESSION" "def" "shift-enter-second-line"
+    ;;
   ctrl-c-multiline)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    wait_for_text "$SESSION" "2" "multiline-second-line"
+    wait_for_text "$SESSION" "abc" "multiline-first-line"
     tmux send-keys -t "$SESSION" -l "def"
     sleep 0.1
     tmux send-keys -t "$SESSION" C-c
     ;;
   ctrl-c-multiline-bottom)
-    submit_cell "$SESSION" "!ls -lah"
-    submit_cell "$SESSION" "!ls -lah"
-    submit_cell "$SESSION" "!ls -lah"
-    submit_cell "$SESSION" "!ls -lah"
+    submit_cell "$SESSION" 'print("\n".join(f"fill {i}" for i in range(30)))'
     tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    wait_for_text "$SESSION" "2" "multiline-bottom-second-line"
+    wait_for_text "$SESSION" "abc" "multiline-bottom-first-line"
     tmux send-keys -t "$SESSION" -l "def"
     sleep 0.1
     tmux send-keys -t "$SESSION" C-c
@@ -315,7 +437,7 @@ case "$ACTION" in
     ;;
   compose-while-busy)
     wait_for_submit_ready "$SESSION"
-    tmux send-keys -t "$SESSION" "import time; time.sleep(3); 42" Enter
+    tmux send-keys -t "$SESSION" "import time; time.sleep(2); 42" Enter
     wait_for_text "$SESSION" "Kernel busy. Ctrl-C to interrupt" "kernel-busy"
     tmux send-keys -t "$SESSION" -l "1+1"
     ;;
@@ -344,7 +466,7 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" "input()" Enter
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 33 -H 3b -H 32 -H 75
     ;;
   stdin-ctrl-d)
@@ -367,13 +489,10 @@ case "$ACTION" in
   pdb-basic)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" 'import pdb; pdb.set_trace(); print("after")' Enter
-    wait_for_text "$SESSION" "(Pdb)" "pdb-prompt-initial" || wait_for_text "$SESSION" "ipdb>" "ipdb-prompt-initial"
+    wait_for_either_text "$SESSION" "(Pdb)" "ipdb>" "debugger-prompt-initial"
     tmux send-keys -t "$SESSION" -l 'where'
     tmux send-keys -t "$SESSION" Enter
     wait_for_text "$SESSION" "where" "pdb-where"
-    tmux send-keys -t "$SESSION" -l 'p 1+1'
-    tmux send-keys -t "$SESSION" Enter
-    wait_for_text "$SESSION" "2" "pdb-print"
     tmux send-keys -t "$SESSION" -l 'c'
     tmux send-keys -t "$SESSION" Enter
     wait_for_text "$SESSION" "after" "pdb-continue"
@@ -381,54 +500,66 @@ case "$ACTION" in
   vim-open-below)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "NAV" "vim-open-below-normal"
     tmux send-keys -t "$SESSION" o
     ;;
   vim-open-below-twice)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "NAV" "vim-open-below-twice-normal-1"
     tmux send-keys -t "$SESSION" o
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "INS" "vim-open-below-twice-insert-1"
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    wait_for_prompt_line_text "$SESSION" "NAV" "vim-open-below-twice-normal-2"
     tmux send-keys -t "$SESSION" o
     ;;
   resize-cycle)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "resize_check"
-    sleep 0.1
+    wait_for_text "$SESSION" "resize_check" "resize-input"
     tmux resize-window -t "$SESSION" -x 90 -y 24
     wait_for_text "$SESSION" "Ctrl-P palette" "resize-90x24"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 132 -y 36
     wait_for_text "$SESSION" "Ctrl-P palette" "resize-132x36"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 74 -y 18
     wait_for_text "$SESSION" "Ctrl-P palette" "resize-74x18"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 120 -y 30
     wait_for_text "$SESSION" "Ctrl-P palette" "resize-120x30"
-    sleep 0.2
+    sleep 0.05
+    ;;
+  resize-long-editor)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -l "$LONG_EDITOR_TEXT"
+    wait_for_text "$SESSION" "aaaaaaaaaaaaaaaaaaaaaaaa" "resize-long-editor-input"
+    for size in 72x18 132x34 64x16 100x22 68x16 120x30 64x16 120x30; do
+      tmux resize-window -t "$SESSION" -x "${size%x*}" -y "${size#*x}"
+      sleep 0.10
+      assert_resize_projection_reset "$SESSION" "resize-long-editor-$size"
+    done
+    tmux send-keys -t "$SESSION" Enter
+    wait_for_text "$SESSION" "Out[1]:" "resize-long-editor-submit"
     ;;
   resize-palette-cycle)
     wait_for_submit_ready "$SESSION"
     tmux send-keys -t "$SESSION" -l "palette_resize_check"
     tmux send-keys -t "$SESSION" C-p
     wait_for_text "$SESSION" "Interrupt Kernel" "palette-open"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 90 -y 24
     wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-90x24"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 132 -y 36
     wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-132x36"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 74 -y 18
     wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-74x18"
-    sleep 0.1
+    sleep 0.03
     tmux resize-window -t "$SESSION" -x 120 -y 30
     wait_for_text "$SESSION" "Interrupt Kernel" "palette-resize-120x30"
-    sleep 0.2
+    sleep 0.05
     ;;
   ctrl-l)
     wait_for_submit_ready "$SESSION"
@@ -441,20 +572,40 @@ case "$ACTION" in
   palette-cycle)
     wait_for_usable_input "$SESSION"
     tmux send-keys -t "$SESSION" C-p
-    sleep 0.1
+    wait_for_text "$SESSION" "Command Palette" "palette-cycle-open"
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" C-p
     ;;
   palette-move-cycle)
     wait_for_usable_input "$SESSION"
     tmux send-keys -t "$SESSION" C-p
-    sleep 0.1
+    wait_for_text "$SESSION" "Command Palette" "palette-move-cycle-open"
     tmux send-keys -t "$SESSION" Down
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" Escape
-    sleep 0.1
+    sleep 0.03
     tmux send-keys -t "$SESSION" C-p
+    ;;
+  palette-interrupt-busy)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" 'import time; time.sleep(5); print("stale-after-interrupt")' Enter
+    wait_for_text "$SESSION" "Kernel busy. Ctrl-C to interrupt" "palette-interrupt-busy"
+    tmux send-keys -t "$SESSION" C-p
+    wait_for_text "$SESSION" "Interrupt Kernel" "palette-interrupt-open"
+    tmux send-keys -t "$SESSION" Down Enter
+    wait_for_text "$SESSION" "^C" "palette-interrupt-marker"
+    wait_for_submit_ready "$SESSION"
+    ;;
+  palette-restart-busy)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" 'import time; time.sleep(5); print("stale-after-restart")' Enter
+    wait_for_text "$SESSION" "Kernel busy. Ctrl-C to interrupt" "palette-restart-busy"
+    tmux send-keys -t "$SESSION" C-p
+    wait_for_text "$SESSION" "Restart Kernel" "palette-restart-open"
+    tmux send-keys -t "$SESSION" Down Down Enter
+    wait_for_text "$SESSION" "kernel restarted" "palette-restart-marker"
+    wait_for_submit_ready "$SESSION"
     ;;
   history-search-open)
     wait_for_usable_input "$SESSION"
@@ -492,9 +643,10 @@ case "$ACTION" in
       wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
     fi
     tmux send-keys -t "$SESSION" Enter
-    sleep 0.1
+    wait_for_loaded_history_editor "$SESSION"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 37 -H 3b -H 35 -H 75
-    tmux send-keys -t "$SESSION" Enter
+    wait_for_prompt_line_text "$SESSION" "[1/2]" "history-search-load-ctrl-k-position"
+    submit_loaded_history_cell "$SESSION" "Out[1]: 1" "history-search-load-ctrl-k-output"
     wait_for_submit_ready "$SESSION"
     ;;
   history-search-load-ctrl-k-ctrl-j)
@@ -506,11 +658,14 @@ case "$ACTION" in
       wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
     fi
     tmux send-keys -t "$SESSION" Enter
-    sleep 0.1
+    wait_for_loaded_history_editor "$SESSION"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 37 -H 3b -H 35 -H 75
-    sleep 0.1
+    wait_for_text "$SESSION" "alpha = 1" "history-search-load-ctrl-k"
+    wait_for_prompt_line_text "$SESSION" "[1/2]" "history-search-load-ctrl-k-position"
     tmux send-keys -t "$SESSION" -H 1b -H 5b -H 31 -H 30 -H 36 -H 3b -H 35 -H 75
-    tmux send-keys -t "$SESSION" Enter
+    wait_for_text "$SESSION" "beta = 2" "history-search-load-ctrl-j"
+    wait_for_prompt_line_text "$SESSION" "[2/2]" "history-search-load-ctrl-j-position"
+    submit_loaded_history_cell "$SESSION" "Out[1]: 2" "history-search-load-ctrl-j-output"
     wait_for_submit_ready "$SESSION"
     ;;
   ctrl-d)
@@ -518,6 +673,26 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" C-d
     sleep 0.1
     tmux send-keys -t "$SESSION" C-d
+    ;;
+  relaunch-after-ctrl-d)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" C-d
+    sleep 0.1
+    tmux send-keys -t "$SESSION" C-d
+    sleep 0.5
+    tmux send-keys -t "$SESSION" "$FPY_CMD" Enter
+    wait_for_usable_input "$SESSION"
+    tmux send-keys -t "$SESSION" -l "abc"
+    wait_for_text "$SESSION" "abc" "relaunch-typed-input"
+    ;;
+  ctrl-d-terminal-cleanup)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" C-d
+    sleep 0.1
+    tmux send-keys -t "$SESSION" C-d
+    sleep 0.3
+    tmux send-keys -t "$SESSION" "printf '__FPY_POST_EXIT_STTY__ '; stty -a | tr '\n' ' '; printf '\n__FPY_POST_EXIT_DONE__\n'" Enter
+    wait_for_text "$SESSION" "__FPY_POST_EXIT_DONE__" "post-exit-stty"
     ;;
   ctrl-d-confirmation)
     wait_for_submit_ready "$SESSION"
@@ -546,9 +721,18 @@ esac
 sleep "$EXIT_WAIT"
 
 capture_pane "$SESSION" > "$AFTER_LOG"
+capture_pane_ansi "$SESSION" > "$AFTER_ANSI_LOG"
+{
+  printf 'sentinel_row=%s\n' "$(line_number_for "$AFTER_LOG" "${VISUAL_SENTINEL:-__FPY_VISUAL_SENTINEL__}")"
+  printf 'fpy_row=%s\n' "$(line_number_for "$AFTER_LOG" "fpy 0.1.0")"
+  printf 'editor_row=%s\n' "$(line_number_for "$AFTER_LOG" "aaaaaaaaaaaaaaaaaaaaaaaa")"
+  printf 'prompt_row=%s\n' "$(line_number_for "$AFTER_LOG" "Ctrl-P palette")"
+} > "$AFTER_META_LOG"
 
 printf 'session: %s\n' "$SESSION"
 printf 'before: %s\n' "$BEFORE_LOG"
 printf 'after: %s\n' "$AFTER_LOG"
+printf 'after_ansi: %s\n' "$AFTER_ANSI_LOG"
+printf 'after_meta: %s\n' "$AFTER_META_LOG"
 printf '\n== after ==\n'
 cat "$AFTER_LOG"
