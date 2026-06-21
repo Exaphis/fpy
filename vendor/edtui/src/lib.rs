@@ -327,7 +327,10 @@ mod view;
 
 pub use events::EditorEventHandler;
 pub use state::{highlight::Highlight, mode::EditorMode, EditorState};
-pub use view::{theme::EditorTheme, EditorStatusLine, EditorView, LineNumbers};
+pub use view::{
+    theme::EditorTheme, EditorRenderCursor, EditorRenderPlan, EditorRenderRow, EditorStatusLine,
+    EditorView, LineNumbers,
+};
 
 #[cfg(feature = "syntax-highlighting")]
 pub use view::syntax_higlighting::{

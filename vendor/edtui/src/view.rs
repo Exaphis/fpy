@@ -11,7 +11,7 @@ use render_line::RenderLine;
 use syntax_higlighting::SyntaxHighlighter;
 
 use crate::{
-    helper::{max_col, rect_indent_y},
+    helper::max_col,
     state::{highlight::Highlight, selection::Selection, EditorState},
     EditorMode, Index2,
 };
@@ -25,7 +25,7 @@ use ratatui_core::{
     buffer::Buffer,
     layout::{Constraint, Layout, Position, Rect},
     style::Style,
-    text::Span,
+    text::{Line, Span},
     widgets::Widget,
 };
 pub use status_line::EditorStatusLine;
@@ -41,6 +41,30 @@ pub enum LineNumbers {
     Absolute,
     /// Display relative line numbers.
     Relative,
+}
+
+/// Terminal-agnostic render output for an [`EditorView`].
+///
+/// This exposes the rows, styles, cursor, and viewport metadata that the
+/// `ratatui` widget also uses to paint itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorRenderPlan {
+    pub rows: Vec<EditorRenderRow>,
+    pub cursor: Option<EditorRenderCursor>,
+    pub viewport_offset: (usize, usize),
+    pub screen_area: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorRenderRow {
+    pub spans: Vec<Span<'static>>,
+    pub gutter: Option<Span<'static>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorRenderCursor {
+    pub position: Position,
+    pub style: Style,
 }
 
 /// Creates the view for the editor. [`EditorView`] and [`EditorState`] are
@@ -208,38 +232,25 @@ impl<'a, 'b> EditorView<'a, 'b> {
         let digits = total_lines.to_string().len();
         (digits + 1) as u16
     }
-}
 
-impl Widget for EditorView<'_, '_> {
     #[allow(clippy::too_many_lines)]
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        // Draw the border.
-        buf.set_style(area, self.theme.base);
+    pub fn render_plan(self, area: Rect) -> EditorRenderPlan {
         let area = match &self.theme.block {
-            Some(b) => {
-                let inner_area = b.inner(area);
-                b.clone().render(area, buf);
-                inner_area
-            }
+            Some(b) => b.inner(area),
             None => area,
         };
 
-        // Split into main section and status line
-        let [main, status] = Layout::vertical([
+        let [main, _status] = Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(u16::from(self.theme.status_line.is_some())),
         ])
         .areas(area);
 
-        // Calculate line number gutter width and split area
         let line_number_width = self.line_number_width();
-        let line_numbers_style = self.theme.line_numbers_style;
-        let (gutter_area, content_main) = if line_number_width > 0 {
+        let (_gutter_area, content_main) = if line_number_width > 0 {
             let [gutter, content] =
                 Layout::horizontal([Constraint::Length(line_number_width), Constraint::Min(0)])
                     .areas(main);
-            // Fill the entire gutter with the line numbers style
-            buf.set_style(gutter, line_numbers_style);
             (Some(gutter), content)
         } else {
             (None, main)
@@ -252,18 +263,11 @@ impl Widget for EditorView<'_, '_> {
         let line_numbers = self.get_line_numbers();
         let lines = &self.state.lines;
 
-        // Retrieve the displayed cursor position. The column of the displayed
-        // cursor is clamped to the maximum line length.
         let max_col = max_col(&self.state.lines, &self.state.cursor, self.state.mode);
         let cursor = Index2::new(self.state.cursor.row, self.state.cursor.col.min(max_col));
 
-        // Store the coordinates of the current editor.
-        // Use content_main (not main) so mouse events are calculated relative to text area.
         self.state.view.set_screen_area(content_main);
 
-        // Update the view offset. Requires the screen size and the position
-        // of the cursor. Updates the view offset only if the cursor is out
-        // side of the view port. The state is stored in the `ViewOffset`.
         let view_state = &mut self.state.view;
         let (offset_x, offset_y) = if wrap_lines {
             (
@@ -278,7 +282,6 @@ impl Widget for EditorView<'_, '_> {
             )
         };
 
-        // Predetermine highlighted sections.
         let mut search_selection: Option<Selection> = None;
         if self.state.mode == EditorMode::Search {
             search_selection = (&self.state.search).into();
@@ -286,8 +289,7 @@ impl Widget for EditorView<'_, '_> {
         let selections = vec![&self.state.selection, &search_selection];
 
         let mut cursor_position: Option<Position> = None;
-        let mut content_area = content_main;
-        let mut gutter_row_area = gutter_area;
+        let mut rows = Vec::new();
         let mut num_rendered_rows = 0;
 
         let line_numbers_enabled = line_numbers != LineNumbers::None;
@@ -295,7 +297,7 @@ impl Widget for EditorView<'_, '_> {
 
         let mut row_index = offset_y;
         for line in lines.iter_row().skip(row_index) {
-            if content_area.height == 0 {
+            if rows.len() >= height {
                 break;
             }
 
@@ -320,56 +322,13 @@ impl Widget for EditorView<'_, '_> {
                 RenderLine::Single(spans)
             };
 
-            // Render line number in the gutter
-            if line_numbers_enabled {
-                if let Some(gutter) = gutter_row_area {
-                    let is_cursor_line = row_index == cursor.row;
-                    let line_num = if is_relative {
-                        if is_cursor_line {
-                            row_index + 1
-                        } else {
-                            row_index.abs_diff(cursor.row)
-                        }
-                    } else {
-                        row_index + 1
-                    };
-
-                    // Right-align line numbers, but left-align current line
-                    let num_str = if is_relative && is_cursor_line {
-                        format!(
-                            "{:<width$}",
-                            line_num,
-                            width = (line_number_width - 1) as usize
-                        )
-                    } else {
-                        format!(
-                            "{:>width$}",
-                            line_num,
-                            width = (line_number_width - 1) as usize
-                        )
-                    };
-                    let num_span = Span::styled(num_str, line_numbers_style);
-
-                    let line_num_area = Rect::new(gutter.x, gutter.y, gutter.width, 1);
-                    buf.set_span(
-                        line_num_area.x,
-                        line_num_area.y,
-                        &num_span,
-                        line_num_area.width,
-                    );
-
-                    let num_lines = render_line.num_lines() as u16;
-                    gutter_row_area = Some(Rect::new(
-                        gutter.x,
-                        gutter.y.saturating_add(num_lines),
-                        gutter.width,
-                        gutter.height.saturating_sub(num_lines),
-                    ));
-                }
-            }
-
-            // Determine the cursor position.
             if row_index == cursor.row {
+                let content_area = Rect::new(
+                    content_main.x,
+                    content_main.y + rows.len() as u16,
+                    content_main.width,
+                    content_main.height.saturating_sub(rows.len() as u16),
+                );
                 cursor_position = Some(render_line.data_coordinate_to_screen_coordinate(
                     cursor.col.saturating_sub(offset_x),
                     content_area,
@@ -377,43 +336,129 @@ impl Widget for EditorView<'_, '_> {
                 ));
             }
 
-            // Render the current line.
-            content_area = {
-                let num_lines = render_line.num_lines();
-                render_line.render(content_area, buf, tab_width);
-                rect_indent_y(content_area, num_lines)
+            let gutter = if line_numbers_enabled {
+                let is_cursor_line = row_index == cursor.row;
+                let line_num = if is_relative {
+                    if is_cursor_line {
+                        row_index + 1
+                    } else {
+                        row_index.abs_diff(cursor.row)
+                    }
+                } else {
+                    row_index + 1
+                };
+
+                let num_str = if is_relative && is_cursor_line {
+                    format!(
+                        "{:<width$}",
+                        line_num,
+                        width = (line_number_width - 1) as usize
+                    )
+                } else {
+                    format!(
+                        "{:>width$}",
+                        line_num,
+                        width = (line_number_width - 1) as usize
+                    )
+                };
+                Some(Span::styled(num_str, self.theme.line_numbers_style))
+            } else {
+                None
             };
+
+            for (index, spans) in render_line.into_rows(tab_width).into_iter().enumerate() {
+                if rows.len() >= height {
+                    break;
+                }
+                rows.push(EditorRenderRow {
+                    spans,
+                    gutter: (index == 0).then(|| gutter.clone()).flatten(),
+                });
+            }
 
             row_index += 1;
         }
 
-        // Compute the final cursor position.
         let final_cursor_position = cursor_position.unwrap_or(Position::new(
             content_main.left(),
             content_main.top() + self.state.cursor.row as u16,
         ));
 
-        // Store the cursor screen position for external access.
         self.state.view.cursor_screen_position = Some(final_cursor_position);
-
-        // Render the cursor on top.
-        if let Some(cell) = buf.cell_mut(final_cursor_position) {
-            cell.set_style(self.theme.cursor_style);
-        }
-
-        // Save the total number of lines that are currently displayed on the viewport.
-        // Required to handle scrolling.
         self.state.view.update_num_rows(num_rendered_rows);
 
-        // Render the status line.
-        if let Some(s) = self.theme.status_line {
-            s.mode(self.state.mode.name())
-                .search(if self.state.mode == EditorMode::Search {
-                    Some(self.state.search_pattern())
-                } else {
-                    None
-                })
-                .render(status, buf);
+        EditorRenderPlan {
+            rows,
+            cursor: Some(EditorRenderCursor {
+                position: final_cursor_position,
+                style: self.theme.cursor_style,
+            }),
+            viewport_offset: (offset_x, offset_y),
+            screen_area: content_main,
+        }
+    }
+}
+
+impl Widget for EditorView<'_, '_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        // Draw the border.
+        buf.set_style(area, self.theme.base);
+        let block = self.theme.block.clone();
+        let status_line = self.theme.status_line.clone();
+        let mode = self.state.mode;
+        let search = (mode == EditorMode::Search).then(|| self.state.search_pattern());
+        let line_numbers_style = self.theme.line_numbers_style;
+
+        let area = match &block {
+            Some(b) => {
+                let inner_area = b.inner(area);
+                b.clone().render(area, buf);
+                inner_area
+            }
+            None => area,
+        };
+
+        let [main, status] = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(u16::from(status_line.is_some())),
+        ])
+        .areas(area);
+
+        let plan = self.render_plan(area);
+        let line_number_width = plan.screen_area.x.saturating_sub(main.x);
+        let (gutter_area, content_main) = if line_number_width > 0 {
+            let [gutter, content] =
+                Layout::horizontal([Constraint::Length(line_number_width), Constraint::Min(0)])
+                    .areas(main);
+            // Fill the entire gutter with the line numbers style
+            buf.set_style(gutter, line_numbers_style);
+            (Some(gutter), content)
+        } else {
+            (None, main)
+        };
+
+        for (row_index, row) in plan.rows.into_iter().enumerate() {
+            let y = content_main.y + row_index as u16;
+            if y >= content_main.bottom() {
+                break;
+            }
+            Line::from(row.spans).render(
+                Rect::new(content_main.x, y, content_main.width, 1),
+                buf,
+            );
+            if let (Some(gutter), Some(gutter_area)) = (row.gutter, gutter_area) {
+                buf.set_span(gutter_area.x, y, &gutter, gutter_area.width);
+            }
+        }
+
+        if let Some(cursor) = plan.cursor {
+            if let Some(cell) = buf.cell_mut(cursor.position) {
+                cell.set_style(cursor.style);
+            }
+        }
+
+        if let Some(s) = status_line {
+            s.mode(mode.name()).search(search).render(status, buf);
         }
     }
 }
@@ -451,4 +496,55 @@ fn generate_spans<'a>(
         base_style,
         selection_style,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{EditorState, Lines};
+    use ratatui_core::{buffer::Buffer, widgets::Widget};
+
+    fn row_text(row: &EditorRenderRow) -> String {
+        row.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn render_plan_exposes_rows_cursor_and_viewport() {
+        let mut state = EditorState::new(Lines::from("abc\ndef"));
+        state.cursor = Index2::new(1, 2);
+
+        let plan = EditorView::new(&mut state)
+            .theme(EditorTheme::default().hide_status_line())
+            .render_plan(Rect::new(0, 0, 20, 4));
+
+        assert_eq!(
+            plan.rows.iter().map(row_text).collect::<Vec<_>>(),
+            vec!["abc".to_string(), "def".to_string()]
+        );
+        assert_eq!(plan.cursor.map(|cursor| cursor.position), Some(Position::new(2, 1)));
+        assert_eq!(plan.viewport_offset, (0, 0));
+        assert_eq!(plan.screen_area, Rect::new(0, 0, 20, 4));
+    }
+
+    #[test]
+    fn widget_renders_content_from_render_plan_rows() {
+        let mut state = EditorState::new(Lines::from("abc"));
+        let mut expected_state = state.clone();
+        let plan = EditorView::new(&mut expected_state)
+            .theme(EditorTheme::default().hide_status_line())
+            .render_plan(Rect::new(0, 0, 20, 1));
+
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 20, 1));
+        EditorView::new(&mut state)
+            .theme(EditorTheme::default().hide_status_line())
+            .render(Rect::new(0, 0, 20, 1), &mut buffer);
+
+        let rendered = (0..3)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert_eq!(rendered, row_text(&plan.rows[0]));
+    }
 }

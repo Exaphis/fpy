@@ -46,6 +46,16 @@ impl RenderLine<'_> {
         )
     }
 
+    pub(super) fn into_rows(self, tab_width: usize) -> Vec<Vec<Span<'static>>> {
+        match self {
+            RenderLine::Wrapped(lines) => lines
+                .into_iter()
+                .map(|line| normalize_tabs(line, tab_width))
+                .collect(),
+            RenderLine::Single(line) => vec![normalize_tabs(line, tab_width)],
+        }
+    }
+
     pub(super) fn render(self, mut area: Rect, buf: &mut Buffer, tab_width: usize) {
         match self {
             RenderLine::Wrapped(lines) => {
@@ -64,9 +74,16 @@ impl RenderLine<'_> {
 }
 
 fn render_line(area: Rect, buf: &mut Buffer, mut line: Vec<Span>, tab_width: usize) {
+    line = normalize_tabs(line, tab_width);
+    Line::from(line).render(area, buf);
+}
+
+fn normalize_tabs(mut line: Vec<Span<'_>>, tab_width: usize) -> Vec<Span<'static>> {
     for span in &mut line {
         replace_tabs_in_span(span, tab_width);
     }
 
-    Line::from(line).render(area, buf);
+    line.into_iter()
+        .map(|span| Span::styled(span.content.into_owned(), span.style))
+        .collect()
 }
