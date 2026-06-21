@@ -45,6 +45,7 @@ pub enum KernelEvent {
         text: String,
     },
     Stream {
+        name: StreamName,
         text: String,
     },
     Error {
@@ -57,6 +58,12 @@ pub enum KernelEvent {
     Info(String),
     Warning(String),
     Fatal(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamName {
+    Stdout,
+    Stderr,
 }
 
 enum KernelCommand {
