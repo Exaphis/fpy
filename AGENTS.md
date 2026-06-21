@@ -8,10 +8,18 @@ This file is for future Codex instances working in this repo.
 
 Key design goals:
 
-- keep transcript output in the normal terminal scrollback
-- use `ratatui` only for the inline prompt/editor area
+- own canonical transcript/display state in `fpy` and render it into the normal terminal
+- keep normal terminal scrollback semantically faithful to committed cell inputs/outputs
+- do not treat terminal scrollback as the canonical transcript source of truth
 - avoid alternate-screen behavior
 - feel closer to IPython than to a fullscreen TUI app
+
+Display/scrollback policy:
+
+- Byte-for-byte historical screen layout is not a goal. Resize, reflow, and redraw may change wrapping, styling, or visible layout.
+- Scrollback fidelity means committed transcript-content fidelity: no duplicated, missing, stale, reordered, or mangled committed cell inputs/outputs.
+- Live UI rows such as the editor, footer, status, palettes, and history search should not leak into scrollback as transcript content.
+- Full redraw/recovery paths may be pi-like, but be careful with terminal scrollback clears (`CSI 3J`): clearing all scrollback is acceptable only as an explicit recovery/strategy choice, not as an accidental default.
 
 ## Important Files
 
@@ -31,25 +39,31 @@ Key design goals:
   Startup and crash diagnostics for local kernels.
 
 - [`src/ui/mod.rs`](src/ui/mod.rs)
-  `AppUi` state machine and terminal lifecycle.
+  `AppUi` state machine. It coordinates state transitions and frame redraws.
+
+- [`src/ui/display.rs`](src/ui/display.rs)
+  Canonical display/transcript model, frame renderer, cursor state, and display fixtures.
+
+- [`src/ui/components/`](src/ui/components)
+  Component-style renderers for transcript, editor, footer, and overlays.
+
+- [`src/ui/backend/`](src/ui/backend)
+  Recording backend and differential normal-terminal crossterm backend.
+
+- [`src/ui/session.rs`](src/ui/session.rs)
+  Raw mode, bracketed paste, keyboard protocol setup, and exit cleanup.
 
 - [`src/ui/editor.rs`](src/ui/editor.rs)
-  `edtui` integration, gutter rendering, and editor setup.
+  `edtui` integration and editor setup helpers.
 
 - [`vendor/edtui`](vendor/edtui)
   Vendored `edtui` dependency. Put editor-core fixes and Vim-emulation fixes here instead of stacking local shims in `src/ui/`.
 
 - [`src/ui/render.rs`](src/ui/render.rs)
-  Pane geometry, inline viewport sizing, throbber/status helpers.
+  Small status/render helpers shared by `AppUi`.
 
 - [`src/ui/transcript.rs`](src/ui/transcript.rs)
   ANSI-aware transcript formatting and syntax-highlighted `In [...]` echo rendering.
-
-- [`src/insert_history/mod.rs`](src/insert_history/mod.rs)
-  Writes transcript above the pane, including the bottom-pinned scroll-region path.
-
-- [`src/custom_terminal.rs`](src/custom_terminal.rs)
-  Custom terminal wrapper used instead of stock `ratatui::Terminal`. If terminal behavior looks wrong, inspect this before blaming `ratatui`.
 
 ## Testing Workflow
 
@@ -66,6 +80,14 @@ For anything involving prompt layout, scrollback, exit cleanup, paste, or editor
 scripts/fpy-tmux-repro.sh ctrl-d
 scripts/fpy-tmux-repro.sh vim-open-below
 scripts/fpy-tmux-repro.sh paste
+```
+
+For visual UI/UX checks that need ANSI captures or launch-position metadata, use:
+
+```bash
+scripts/fpy-tmux-visual-repro.sh startup-anchor
+scripts/fpy-tmux-visual-repro.sh footer-styling
+scripts/fpy-tmux-visual-repro.sh bottom-prompt
 ```
 
 For startup latency comparisons against plain IPython, use:
@@ -109,6 +131,8 @@ The script writes captures to:
 
 - `target/fpy-tmux-repro.before.log`
 - `target/fpy-tmux-repro.after.log`
+- `target/fpy-tmux-repro.after.ansi.log`
+- `target/fpy-tmux-repro.after.meta`
 
 Do not trust non-interactive PTY behavior for terminal bugs unless tmux shows the same thing.
 
@@ -118,7 +142,7 @@ Do not trust non-interactive PTY behavior for terminal bugs unless tmux shows th
 
 - Bracketed paste is enabled in [`src/ui/mod.rs`](src/ui/mod.rs). Pasted text is normalized from `\r\n` / `\r` to `\n` before being handed to `edtui`.
 
-- Pane geometry changes must invalidate the custom terminal viewport or stale screen cells remain visible.
+- Frame backend changes must keep committed transcript rows distinct from live UI rows. Transcript growth may append; live UI edits, resize, and recovery should repaint without duplicating committed transcript content.
 
 - The biggest remaining architectural tension is between `fpy` wanting shell-like inline behavior and `edtui` being a generic `ratatui` editor widget. Since `edtui` is vendored, prefer making editor-core/Vim-fidelity changes in `vendor/edtui` rather than adding more local workarounds.
 
@@ -141,8 +165,8 @@ Current likely candidates for future vendored `edtui` work:
 
 ## Practical Guidance
 
-- Prefer fixing terminal behavior with the smallest possible change in `ui/`, `insert_history/`, or `custom_terminal.rs`.
-- If a bug only appears when the prompt is near the bottom of the screen, check the bottom-pinned insertion path first.
+- Prefer fixing terminal behavior with the smallest possible change in `src/ui/display.rs`, `src/ui/components/`, `src/ui/backend/`, or `src/ui/session.rs`.
+- If a bug only appears when the prompt is near the bottom of the screen, check frame classification and visible-row repainting in `src/ui/backend/` first.
 - If a bug only appears during editing, check whether it is an `edtui` behavior. Prefer fixing such behavior in `vendor/edtui` before adding `fpy`-specific glue.
 - If you change prompt sizing or viewport logic, rerun tmux repros immediately.
 
@@ -152,6 +176,5 @@ The codebase was recently refactored to split the large single-file modules into
 
 - `src/kernel/`
 - `src/ui/`
-- `src/insert_history/`
 
 Keep moving in that direction. Avoid growing `src/ui/mod.rs` or `src/kernel/mod.rs` back into giant mixed-responsibility files.

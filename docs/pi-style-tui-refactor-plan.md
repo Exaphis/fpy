@@ -2,6 +2,8 @@
 
 This document records what pi's TUI actually does, based on the installed `@earendil-works/pi-tui` docs and implementation, and then proposes which ideas are worth borrowing for `fpy`.
 
+Implementation status: the refactor has moved past the migration phase described below. `fpy` now uses app-owned display state, structured transcript entries, component rendering, display fixtures, and a differential normal-terminal frame backend. The old `custom_terminal.rs` / `insert_history` display path has been removed from the crate.
+
 Relevant pi files researched:
 
 - `/Users/kevin/n/lib/node_modules/@earendil-works/pi-coding-agent/docs/tui.md`
