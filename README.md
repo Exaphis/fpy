@@ -104,6 +104,8 @@ scripts/fpy-tmux-repro.sh ctrl-d
 scripts/fpy-tmux-repro.sh vim-open-below
 PRE_INPUT='' INPUTS='' PASTE_TEXT='x = 1
 y = 2' scripts/fpy-tmux-repro.sh paste
+scripts/fpy-tmux-visual-repro.sh startup-anchor
+scripts/fpy-tmux-visual-repro.sh footer-styling
 ```
 
 The `tmux` e2e suite currently covers:
@@ -123,9 +125,11 @@ High-level module layout:
 
 - [`src/app.rs`](src/app.rs): top-level async event loop and UI/kernel coordination
 - [`src/kernel/`](src/kernel): kernel lifecycle, transport runtime, message decoding, diagnostics
-- [`src/ui/`](src/ui): inline terminal UI, editor integration, rendering helpers, transcript formatting
-- [`src/insert_history/`](src/insert_history): transcript insertion above the prompt area
-- [`src/custom_terminal.rs`](src/custom_terminal.rs): custom terminal wrapper used instead of stock `ratatui::Terminal`
+- [`src/ui/display.rs`](src/ui/display.rs): canonical display/transcript model, frame renderer, cursor state, display fixtures
+- [`src/ui/components/`](src/ui/components): component renderers for transcript, editor, footer, and overlays
+- [`src/ui/backend/`](src/ui/backend): recording backend and differential normal-terminal crossterm backend
+- [`src/ui/session.rs`](src/ui/session.rs): raw mode, bracketed paste, keyboard protocol setup, and exit cleanup
+- [`src/ui/`](src/ui): UI state machine, input handling, editor integration, and transcript formatting
 - [`src/jupyter.rs`](src/jupyter.rs): Jupyter wire-message encoding, signing, and decoding
 
-The most important design constraint is that `fpy` does not want a fullscreen alternate-screen TUI. A lot of the implementation complexity exists to keep the prompt inline while preserving terminal history and shell recovery on exit.
+The most important design constraint is that `fpy` does not want a fullscreen alternate-screen TUI. The canonical transcript/display state lives in `fpy`, while the terminal remains a normal main-screen render target with semantically faithful scrollback and shell recovery on exit.

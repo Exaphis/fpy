@@ -309,7 +309,14 @@ fn handle_kernel_event_stream(
 ) -> Result<bool> {
     match event {
         Some(event) => handle_kernel_event(ui, execution_timer, history, pending_history, event),
-        None => Ok(true),
+        None => {
+            execution_timer.clear();
+            pending_history.take();
+            ui.set_status(KernelStatus::Disconnected);
+            ui.insert_transcript("Kernel exited unexpectedly")?;
+            ui.redraw()?;
+            Ok(true)
+        }
     }
 }
 
@@ -324,6 +331,7 @@ fn handle_local_kernel_liveness(
         pending_history.take();
         ui.set_status(KernelStatus::Disconnected);
         ui.insert_transcript(message)?;
+        ui.redraw()?;
         Ok(true)
     } else {
         Ok(false)
@@ -396,6 +404,8 @@ fn handle_kernel_event(
                 KernelStatus::Disconnected => {
                     execution_timer.clear();
                     pending_history.take();
+                    ui.insert_transcript("Kernel exited unexpectedly")?;
+                    ui.redraw()?;
                     return Ok(true);
                 }
                 _ => {}
@@ -414,16 +424,13 @@ fn handle_kernel_event(
             text,
         } => {
             ui.set_last_execution_count(execution_count);
-            let prompt = execution_count
-                .map(|count| format!("Out[{count}]"))
-                .unwrap_or_else(|| "Out[?]".to_string());
-            ui.insert_transcript(format!("{prompt}: {text}"))?;
+            ui.insert_execute_result(execution_count, &text)?;
         }
         KernelEvent::Pager { text } => {
             ui.insert_transcript(text)?;
         }
-        KernelEvent::Stream { text } => {
-            ui.insert_transcript(text)?;
+        KernelEvent::Stream { name, text } => {
+            ui.insert_stream(name, &text)?;
         }
         KernelEvent::Error { traceback } => {
             if let Some(entry) = pending_history.as_mut() {
@@ -437,7 +444,7 @@ fn handle_kernel_event(
                 };
             }
             ui.clear_input_request();
-            ui.insert_transcript(traceback.join("\n"))?;
+            ui.insert_error(&traceback)?;
         }
         KernelEvent::InputRequest { prompt, password } => {
             ui.begin_input_request(prompt, password);
@@ -454,6 +461,7 @@ fn handle_kernel_event(
             pending_history.take();
             ui.set_status(KernelStatus::Disconnected);
             ui.insert_transcript(format!("fatal: {text}"))?;
+            ui.redraw()?;
             return Ok(true);
         }
     }
@@ -514,21 +522,19 @@ async fn handle_ready_ui_action(
             ui.set_status(KernelStatus::Busy);
             Ok(false)
         }
-        UiAction::ReplyInput {
-            value,
-            prompt,
-            password,
-        } => {
-            if let Some(prompt) = prompt.filter(|_| !password) {
-                ui.insert_transcript(format!("{prompt}{value}"))?;
-            }
+        UiAction::ReplyInput { value } => {
+            ui.record_input_reply(&value);
             kernel.send_input_reply(value)?;
             ui.set_status(KernelStatus::Busy);
             Ok(false)
         }
         UiAction::Interrupt => {
             match kernel.interrupt() {
-                Ok(()) => ui.insert_transcript("^C")?,
+                Ok(()) => {
+                    execution_timer.clear();
+                    pending_history.take();
+                    ui.insert_transcript("^C")?;
+                }
                 Err(error) => ui.insert_transcript(format!("interrupt unavailable: {error}"))?,
             }
             Ok(false)
@@ -544,6 +550,7 @@ async fn handle_ready_ui_action(
                 Ok(()) => {
                     pending_history.take();
                     ui.set_connection_summary(kernel.connection_summary());
+                    ui.reset_last_execution_count();
                     ui.mark_session_ready();
                     ui.insert_transcript("kernel restarted")?;
                 }

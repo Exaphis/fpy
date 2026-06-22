@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::{
     jupyter::WireMessage,
-    kernel::{KernelEvent, KernelStatus},
+    kernel::{KernelEvent, KernelStatus, StreamName},
 };
 
 pub(super) fn shell_message_to_events(message: WireMessage) -> Vec<KernelEvent> {
@@ -50,6 +50,10 @@ pub(super) fn iopub_message_to_events(message: WireMessage) -> Vec<KernelEvent> 
                 .to_string(),
         }],
         "stream" => vec![KernelEvent::Stream {
+            name: match message.content.get("name").and_then(Value::as_str) {
+                Some("stderr") => StreamName::Stderr,
+                _ => StreamName::Stdout,
+            },
             text: message
                 .content
                 .get("text")
@@ -145,7 +149,7 @@ mod tests {
     use super::{iopub_message_to_events, shell_message_to_events, stdin_message_to_events};
     use crate::{
         jupyter::{Header, WireMessage},
-        kernel::{KernelEvent, KernelStatus},
+        kernel::{KernelEvent, KernelStatus, StreamName},
     };
 
     fn wire_message(msg_type: &str, content: Value) -> WireMessage {
@@ -180,6 +184,22 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [KernelEvent::Status(KernelStatus::Idle)]
+        ));
+    }
+
+    #[test]
+    fn maps_stream_names_to_events() {
+        let events = iopub_message_to_events(wire_message(
+            "stream",
+            json!({ "name": "stderr", "text": "warn\n" }),
+        ));
+
+        assert!(matches!(
+            events.as_slice(),
+            [KernelEvent::Stream {
+                name: StreamName::Stderr,
+                text
+            }] if text == "warn\n"
         ));
     }
 
