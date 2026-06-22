@@ -40,6 +40,7 @@ pub(crate) struct RecordingBackend {
     previous_committed_rows: Vec<String>,
     previous_size: Option<Size>,
     previous_append_safe: bool,
+    pending_scrollback_recovery: bool,
     last_update_kind: Option<FrameUpdateKind>,
     expected_scrollback_rows: Vec<String>,
     snapshot: Option<TestSnapshot>,
@@ -56,6 +57,7 @@ pub(crate) struct CrosstermMainScreenBackend<W: Write> {
     previous_visible_rows: Vec<String>,
     previous_append_safe: bool,
     needs_full_projection_reset: bool,
+    pending_scrollback_recovery: bool,
     last_update_kind: Option<FrameUpdateKind>,
 }
 
@@ -76,6 +78,7 @@ impl<W: Write> CrosstermMainScreenBackend<W> {
             previous_visible_rows: Vec::new(),
             previous_append_safe: false,
             needs_full_projection_reset: false,
+            pending_scrollback_recovery: false,
             last_update_kind: None,
         }
     }
@@ -171,6 +174,7 @@ impl<W: Write> CrosstermMainScreenBackend<W> {
         self.previous_visible_rows.clear();
         self.previous_append_safe = false;
         self.needs_full_projection_reset = false;
+        self.pending_scrollback_recovery = false;
         self.previous_size = None;
         Ok(())
     }
@@ -184,6 +188,7 @@ impl<W: Write> CrosstermMainScreenBackend<W> {
         self.previous_visible_rows.clear();
         self.previous_append_safe = false;
         self.needs_full_projection_reset = false;
+        self.pending_scrollback_recovery = false;
         self.previous_size = None;
         self.last_update_kind = Some(FrameUpdateKind::Recovery);
         self.writer.flush()
@@ -235,6 +240,7 @@ impl RecordingBackend {
             previous_committed_rows: Vec::new(),
             previous_size: None,
             previous_append_safe: false,
+            pending_scrollback_recovery: false,
             last_update_kind: None,
             expected_scrollback_rows: Vec::new(),
             snapshot: None,
@@ -259,19 +265,36 @@ impl RecordingBackend {
             &committed_rows,
         );
 
+        let recover_scrollback = update_kind == FrameUpdateKind::Recovery
+            || ((self.pending_scrollback_recovery
+                || (update_kind == FrameUpdateKind::TranscriptAppend
+                    && !self.previous_append_safe))
+                && frame.transcript_append_safe);
+
         match update_kind {
-            FrameUpdateKind::Initial | FrameUpdateKind::Recovery => {
+            FrameUpdateKind::Initial => {
                 self.expected_scrollback_rows = committed_rows.clone();
+                self.pending_scrollback_recovery = false;
+            }
+            _ if recover_scrollback => {
+                self.expected_scrollback_rows = committed_rows.clone();
+                self.pending_scrollback_recovery = false;
             }
             FrameUpdateKind::ResizeOrReflow => {
                 self.expected_scrollback_rows.clear();
+                self.pending_scrollback_recovery = false;
             }
             FrameUpdateKind::TranscriptAppend if self.previous_append_safe => {
                 self.expected_scrollback_rows
                     .extend_from_slice(&committed_rows[self.previous_committed_rows.len()..]);
             }
-            FrameUpdateKind::TranscriptAppend => {}
+            FrameUpdateKind::TranscriptAppend => {
+                self.pending_scrollback_recovery = true;
+            }
             FrameUpdateKind::LiveUiOnly => {}
+            FrameUpdateKind::Recovery => {
+                unreachable!("recover_scrollback handles recovery updates")
+            }
         }
 
         self.previous_committed_rows = committed_rows;
@@ -355,13 +378,20 @@ impl<W: Write> TerminalBackend for CrosstermMainScreenBackend<W> {
             &committed_rows,
         );
 
-        let full_projection_reset =
-            self.needs_full_projection_reset || update_kind == FrameUpdateKind::ResizeOrReflow;
+        let full_projection_reset = self.needs_full_projection_reset
+            || update_kind == FrameUpdateKind::ResizeOrReflow
+            || update_kind == FrameUpdateKind::Recovery
+            || ((self.pending_scrollback_recovery
+                || (update_kind == FrameUpdateKind::TranscriptAppend
+                    && !self.previous_append_safe))
+                && frame.transcript_append_safe);
         if full_projection_reset {
             self.full_projection_reset()?;
         } else if update_kind == FrameUpdateKind::TranscriptAppend && self.previous_append_safe {
             self.append_committed_rows(&committed_rows[self.previous_committed_rows.len()..])?;
             self.previous_visible_rows.clear();
+        } else if update_kind == FrameUpdateKind::TranscriptAppend {
+            self.pending_scrollback_recovery = true;
         }
 
         let (first_full_row, origin_y) = self.draw_visible_rows(&frame)?;
@@ -437,7 +467,7 @@ mod tests {
     use crate::ui::{
         display::{
             DisplayModel, DisplayRenderer, HistorySearchOverlayModel, HistorySearchResultModel,
-            OverlayModel, PaletteOverlayModel,
+            OverlayModel, PaletteOverlayModel, StreamName,
         },
         transcript::strip_ansi,
     };
@@ -545,6 +575,46 @@ mod tests {
     }
 
     #[test]
+    fn recording_backend_recovers_after_overlay_blocks_transcript_append() {
+        let mut renderer = DisplayRenderer;
+        let mut backend = RecordingBackend::default();
+        let mut model = DisplayModel::new();
+
+        model.overlay = OverlayModel::Palette(PaletteOverlayModel {
+            items: vec![
+                "Quit".to_string(),
+                "Interrupt Kernel".to_string(),
+                "Restart Kernel".to_string(),
+            ],
+            selected: 1,
+        });
+        render_into(&mut renderer, &mut backend, &model, Size::new(80, 8));
+
+        model.transcript.push_system("kernel restarted");
+        render_into(&mut renderer, &mut backend, &model, Size::new(80, 8));
+
+        let snapshot = backend.snapshot().expect("snapshot");
+        assert!(snapshot.expected_scrollback_rows.is_empty());
+        assert_eq!(
+            backend.last_update_kind(),
+            Some(FrameUpdateKind::TranscriptAppend)
+        );
+
+        model.overlay = OverlayModel::None;
+        render_into(&mut renderer, &mut backend, &model, Size::new(80, 8));
+
+        let snapshot = backend.snapshot().expect("snapshot");
+        assert_eq!(
+            snapshot.expected_scrollback_rows,
+            vec!["kernel restarted".to_string()]
+        );
+        assert_eq!(
+            backend.last_update_kind(),
+            Some(FrameUpdateKind::LiveUiOnly)
+        );
+    }
+
+    #[test]
     fn recording_backend_classifies_first_frame_as_initial() {
         let mut renderer = DisplayRenderer;
         let mut backend = RecordingBackend::default();
@@ -589,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn main_screen_backend_does_not_append_transcript_from_palette_projection() {
+    fn main_screen_backend_resets_after_palette_blocks_transcript_append() {
         let mut renderer = DisplayRenderer;
         let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 8));
         let mut model = DisplayModel::new();
@@ -610,6 +680,8 @@ mod tests {
         render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
         let output = String::from_utf8_lossy(&backend.writer()[before_append..]);
 
+        assert!(output.contains("\u{1b}[2J"));
+        assert!(output.contains("\u{1b}[3J"));
         assert!(!output.contains("kernel restarted\r\n"));
         assert!(!output.contains("Interrupt Kernel\r\n"));
         assert_eq!(
@@ -619,7 +691,49 @@ mod tests {
     }
 
     #[test]
-    fn main_screen_backend_does_not_append_transcript_from_history_search_projection() {
+    fn main_screen_backend_defers_reset_until_overlay_closes() {
+        let mut renderer = DisplayRenderer;
+        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 8));
+        let mut model = DisplayModel::new();
+
+        model.overlay = OverlayModel::Palette(PaletteOverlayModel {
+            items: vec![
+                "Quit".to_string(),
+                "Interrupt Kernel".to_string(),
+                "Restart Kernel".to_string(),
+            ],
+            selected: 1,
+        });
+        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
+
+        let before_blocked_append = backend.writer().len();
+        model.transcript.push_system("kernel restarted");
+        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
+        let blocked_output = String::from_utf8_lossy(&backend.writer()[before_blocked_append..]);
+
+        assert!(!blocked_output.contains("kernel restarted\r\n"));
+        assert!(!blocked_output.contains("\u{1b}[3J"));
+        assert_eq!(
+            backend.last_update_kind(),
+            Some(FrameUpdateKind::TranscriptAppend)
+        );
+
+        let before_overlay_close = backend.writer().len();
+        model.overlay = OverlayModel::None;
+        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
+        let recovery_output = String::from_utf8_lossy(&backend.writer()[before_overlay_close..]);
+
+        assert!(recovery_output.contains("\u{1b}[2J"));
+        assert!(recovery_output.contains("\u{1b}[3J"));
+        assert!(!recovery_output.contains("Interrupt Kernel"));
+        assert_eq!(
+            backend.last_update_kind(),
+            Some(FrameUpdateKind::LiveUiOnly)
+        );
+    }
+
+    #[test]
+    fn main_screen_backend_resets_after_history_search_blocks_transcript_append() {
         let mut renderer = DisplayRenderer;
         let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 8));
         let mut model = DisplayModel::new();
@@ -641,6 +755,8 @@ mod tests {
         render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
         let output = String::from_utf8_lossy(&backend.writer()[before_append..]);
 
+        assert!(output.contains("\u{1b}[2J"));
+        assert!(output.contains("\u{1b}[3J"));
         assert!(!output.contains("kernel restarted\r\n"));
         assert!(!output.contains("Restart Kernel\r\n"));
         assert_eq!(
@@ -712,7 +828,28 @@ mod tests {
         render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
         let output = String::from_utf8_lossy(&backend.writer()[before_shorter_frame..]);
 
-        assert_eq!(output.matches("\u{1b}[2K").count(), 3);
+        assert!(output.contains("\u{1b}[2J"));
+        assert!(output.contains("\u{1b}[3J"));
+        assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Recovery));
+    }
+
+    #[test]
+    fn main_screen_backend_full_resets_when_stream_rows_coalesce() {
+        let mut renderer = DisplayRenderer;
+        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 5));
+        let mut model = DisplayModel::new();
+
+        model.transcript.push_stream(StreamName::Stdout, "a");
+        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
+        let before_coalesced_stream = backend.writer().len();
+
+        model.transcript.push_stream(StreamName::Stdout, "b");
+        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
+        let output = String::from_utf8_lossy(&backend.writer()[before_coalesced_stream..]);
+
+        assert!(output.contains("\u{1b}[2J"));
+        assert!(output.contains("\u{1b}[3J"));
+        assert!(!output.contains("ab\r\n"));
         assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Recovery));
     }
 
