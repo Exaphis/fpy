@@ -6,7 +6,10 @@ use crate::EditorState;
 /// dispatches many commands through generic actions. Centralizing transaction
 /// ownership here gives the Vim layer a single place to grow command-oriented
 /// undo semantics as commands migrate out of the keybinding table.
-pub(crate) fn in_undo_transaction<T>(state: &mut EditorState, f: impl FnOnce(&mut EditorState) -> T) -> T {
+pub(crate) fn in_undo_transaction<T>(
+    state: &mut EditorState,
+    f: impl FnOnce(&mut EditorState) -> T,
+) -> T {
     state.begin_undo_transaction();
     let result = f(state);
     state.end_undo_transaction();

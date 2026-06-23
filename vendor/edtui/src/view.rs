@@ -445,10 +445,7 @@ impl Widget for EditorView<'_, '_> {
             if y >= content_main.bottom() {
                 break;
             }
-            Line::from(row.spans).render(
-                Rect::new(content_main.x, y, content_main.width, 1),
-                buf,
-            );
+            Line::from(row.spans).render(Rect::new(content_main.x, y, content_main.width, 1), buf);
             if let (Some(gutter), Some(gutter_area)) = (row.gutter, gutter_area) {
                 buf.set_span(gutter_area.x, y, &gutter, gutter_area.width);
             }
@@ -538,7 +535,11 @@ fn char_at(lines: &jagged::Jagged<char>, position: Index2) -> Option<char> {
         .copied()
 }
 
-fn find_matching_bracket(lines: &jagged::Jagged<char>, position: Index2, ch: char) -> Option<Index2> {
+fn find_matching_bracket(
+    lines: &jagged::Jagged<char>,
+    position: Index2,
+    ch: char,
+) -> Option<Index2> {
     let (open, close, forward) = match ch {
         '(' => ('(', ')', true),
         '[' => ('[', ']', true),
@@ -615,7 +616,10 @@ mod tests {
             plan.rows.iter().map(row_text).collect::<Vec<_>>(),
             vec!["abc".to_string(), "def".to_string()]
         );
-        assert_eq!(plan.cursor.map(|cursor| cursor.position), Some(Position::new(2, 1)));
+        assert_eq!(
+            plan.cursor.map(|cursor| cursor.position),
+            Some(Position::new(2, 1))
+        );
         assert_eq!(plan.viewport_offset, (0, 0));
         assert_eq!(plan.screen_area, Rect::new(0, 0, 20, 4));
     }
@@ -646,9 +650,7 @@ mod tests {
             .theme(EditorTheme::default().hide_status_line())
             .render(Rect::new(0, 0, 20, 1), &mut buffer);
 
-        let rendered = (0..3)
-            .map(|x| buffer[(x, 0)].symbol())
-            .collect::<String>();
+        let rendered = (0..3).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
         assert_eq!(rendered, row_text(&plan.rows[0]));
     }
 }

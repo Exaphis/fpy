@@ -8,7 +8,10 @@ use crate::{
 
 use super::{
     motion::{self as vim_motion, CharMotionKind, MotionKind},
-    operator as vim_operator, operator::Operator, range::TextRange, state::VimCommandState,
+    operator as vim_operator,
+    operator::Operator,
+    range::TextRange,
+    state::VimCommandState,
     text_object as vim_text_object, visual as vim_visual,
 };
 
@@ -211,7 +214,11 @@ impl VimCommandContext<'_> {
             editor.cursor = destination;
             if matches!(
                 motion,
-                MotionKind::LineEnd | MotionKind::Up | MotionKind::Down | MotionKind::FirstRow | MotionKind::LastRow
+                MotionKind::LineEnd
+                    | MotionKind::Up
+                    | MotionKind::Down
+                    | MotionKind::FirstRow
+                    | MotionKind::LastRow
             ) {
                 editor.preferred_col = preferred_col;
             } else if motion == MotionKind::Right
@@ -220,7 +227,8 @@ impl VimCommandContext<'_> {
                 && editor.cursor.row + 1 < editor.lines.len()
             {
                 if self.state.command_count() > 1 {
-                    editor.vim_failed_right_col = Some(editor.cursor.col + self.state.command_count());
+                    editor.vim_failed_right_col =
+                        Some(editor.cursor.col + self.state.command_count());
                 }
             } else {
                 editor.preferred_col = None;
@@ -444,7 +452,9 @@ impl VimCommandContext<'_> {
                             .lines
                             .iter_row()
                             .nth(editor.cursor.row)
-                            .is_some_and(|row| row.first().is_some_and(|ch| ch.is_ascii_whitespace()));
+                            .is_some_and(|row| {
+                                row.first().is_some_and(|ch| ch.is_ascii_whitespace())
+                            });
                     if change_from_leading_whitespace {
                         range.start.col = 0;
                         range.end.col = editor

@@ -186,7 +186,10 @@ fn line_number_gutter(gutter: Option<&ratatui::text::Span<'static>>, width: usiz
     let gutter_text = if text.is_empty() {
         " ".repeat(width)
     } else {
-        format!("{text:>number_width$} ", number_width = width.saturating_sub(1))
+        format!(
+            "{text:>number_width$} ",
+            number_width = width.saturating_sub(1)
+        )
     };
     render_styled_line(&StyledLine::new(vec![StyledSegment::raw(
         gutter_text,
@@ -504,7 +507,11 @@ mod tests {
 
         let editor_colors = rgb_sequences(&editor_rows[0].text);
         let transcript_colors = rgb_sequences(after_prompt_reset(&transcript));
-        assert!(editor_colors.iter().all(|color| transcript_colors.contains(color)));
+        assert!(
+            editor_colors
+                .iter()
+                .all(|color| transcript_colors.contains(color))
+        );
     }
 
     #[test]

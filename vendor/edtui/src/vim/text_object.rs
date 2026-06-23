@@ -77,7 +77,10 @@ fn word_range_by(
     }
 
     let mut cursor_col = state.cursor.col;
-    if line.get(cursor_col).is_some_and(|ch| ch.is_ascii_whitespace()) {
+    if line
+        .get(cursor_col)
+        .is_some_and(|ch| ch.is_ascii_whitespace())
+    {
         let mut whitespace_start = cursor_col;
         while whitespace_start > 0
             && line
@@ -180,11 +183,7 @@ fn around_word_range_by(
             start -= 1;
         }
         let mut end = state.cursor.col;
-        while end + 1 < len_col
-            && line
-                .get(end + 1)
-                .is_some_and(|ch| ch.is_ascii_whitespace())
-        {
+        while end + 1 < len_col && line.get(end + 1).is_some_and(|ch| ch.is_ascii_whitespace()) {
             end += 1;
         }
         if end + 1 >= len_col {

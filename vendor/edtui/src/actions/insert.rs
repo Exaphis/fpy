@@ -44,26 +44,34 @@ impl Execute for LineBreak {
             state.lines.push(Vec::new());
         }
         for _ in 0..self.0 {
-            let kept_split_spaces = state.lines.iter_row().nth(state.cursor.row).map_or(0, |row| {
-                let split_spaces = row
-                    .iter()
-                    .skip(state.cursor.col)
-                    .take_while(|ch| ch.is_ascii_whitespace())
-                    .count();
-                let has_text_after_split_spaces = row
-                    .iter()
-                    .skip(state.cursor.col + split_spaces)
-                    .any(|ch| !ch.is_ascii_whitespace());
-                if row.iter().take_while(|ch| ch.is_ascii_whitespace()).count() >= PYTHON_INDENT_WIDTH
-                    && row.iter().take(state.cursor.col).any(|ch| !ch.is_ascii_whitespace())
-                    && split_spaces == 1
-                    && has_text_after_split_spaces
-                {
-                    split_spaces
-                } else {
-                    0
-                }
-            });
+            let kept_split_spaces = state
+                .lines
+                .iter_row()
+                .nth(state.cursor.row)
+                .map_or(0, |row| {
+                    let split_spaces = row
+                        .iter()
+                        .skip(state.cursor.col)
+                        .take_while(|ch| ch.is_ascii_whitespace())
+                        .count();
+                    let has_text_after_split_spaces = row
+                        .iter()
+                        .skip(state.cursor.col + split_spaces)
+                        .any(|ch| !ch.is_ascii_whitespace());
+                    if row.iter().take_while(|ch| ch.is_ascii_whitespace()).count()
+                        >= PYTHON_INDENT_WIDTH
+                        && row
+                            .iter()
+                            .take(state.cursor.col)
+                            .any(|ch| !ch.is_ascii_whitespace())
+                        && split_spaces == 1
+                        && has_text_after_split_spaces
+                    {
+                        split_spaces
+                    } else {
+                        0
+                    }
+                });
             let indent = python_indent_after_line_break(state);
             line_break(&mut state.lines, &mut state.cursor);
             if kept_split_spaces == 0 {
@@ -205,13 +213,21 @@ fn reindent_python_block_start(state: &mut EditorState) {
             leading
         } else {
             let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
-            if block_indent > 0 { block_indent } else { leading }
+            if block_indent > 0 {
+                block_indent
+            } else {
+                leading
+            }
         }
     } else if starts_block && state.cursor.row == 0 {
         0
     } else if contains_block && leading >= PYTHON_INDENT_WIDTH && state.cursor.row > 0 {
         let block_indent = python_indent_for_new_block_above(state, state.cursor.row - 1);
-        if block_indent > 0 { block_indent } else { leading }
+        if block_indent > 0 {
+            block_indent
+        } else {
+            leading
+        }
     } else if contains_block && state.cursor.row == 0 {
         0
     } else if starts_block || leading >= PYTHON_INDENT_WIDTH {
@@ -300,8 +316,22 @@ fn python_indent_for_row(state: &EditorState, row_index: usize) -> usize {
 fn python_block_opener_indent(text: &str) -> Option<usize> {
     let trimmed = text.trim_start();
     let is_block_keyword = [
-        "def ", "class ", "if ", "elif ", "else", "for ", "while ", "try", "except", "finally",
-        "with ", "match ", "case ", "async def ", "async for ", "async with ",
+        "def ",
+        "class ",
+        "if ",
+        "elif ",
+        "else",
+        "for ",
+        "while ",
+        "try",
+        "except",
+        "finally",
+        "with ",
+        "match ",
+        "case ",
+        "async def ",
+        "async for ",
+        "async with ",
     ]
     .iter()
     .any(|prefix| trimmed.starts_with(prefix) || trimmed.contains(prefix));

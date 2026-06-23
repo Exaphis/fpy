@@ -191,7 +191,11 @@ fn delete_word_forward(state: &mut EditorState) {
         .lines
         .iter_row()
         .nth(state.cursor.row)
-        .is_some_and(|row| row.iter().skip(state.cursor.col).all(|ch| !ch.is_ascii_whitespace()))
+        .is_some_and(|row| {
+            row.iter()
+                .skip(state.cursor.col)
+                .all(|ch| !ch.is_ascii_whitespace())
+        })
         && state.cursor.row + 1 < state.lines.iter_row().count()
     {
         let mut rows: Vec<String> = state
@@ -221,7 +225,10 @@ fn delete_word_forward(state: &mut EditorState) {
             for row in rows {
                 state.lines.push(row.chars().collect::<Vec<_>>());
             }
-            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
+            state.cursor.row = state
+                .cursor
+                .row
+                .min(state.lines.iter_row().count().saturating_sub(1));
             state.cursor.col = 0;
         }
         return;
@@ -826,7 +833,13 @@ impl Execute for JoinLineWithLineBelow {
             state.lines.push(row.chars().collect::<Vec<_>>());
         }
         let cursor_col = join_col + usize::from(joined_with_space && left_had_trailing_whitespace);
-        state.cursor.col = cursor_col.min(state.lines.len_col(row).unwrap_or_default().saturating_sub(1));
+        state.cursor.col = cursor_col.min(
+            state
+                .lines
+                .len_col(row)
+                .unwrap_or_default()
+                .saturating_sub(1),
+        );
     }
 }
 

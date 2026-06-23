@@ -325,7 +325,11 @@ fn move_word_backward(state: &mut EditorState) {
                 .lines
                 .iter_row()
                 .nth(start_index.row)
-                .is_some_and(|row| row.iter().take(start_index.col).all(|ch| ch.is_ascii_whitespace())))
+                .is_some_and(|row| {
+                    row.iter()
+                        .take(start_index.col)
+                        .all(|ch| ch.is_ascii_whitespace())
+                }))
     {
         start_index.row = start_index.row.saturating_sub(1);
         start_index.col = state.lines.last_col_index(start_index.row);
@@ -362,7 +366,10 @@ impl Execute for MoveBigWordForward {
         state.clamp_column();
         for _ in 0..self.0 {
             move_big_word_forward(state);
-            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
+            state.cursor.row = state
+                .cursor
+                .row
+                .min(state.lines.iter_row().count().saturating_sub(1));
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -418,7 +425,10 @@ impl Execute for MoveBigWordForwardToEndOfWord {
         state.clamp_column();
         for _ in 0..self.0 {
             move_big_word_forward_to_end_of_word(state);
-            state.cursor.row = state.cursor.row.min(state.lines.iter_row().count().saturating_sub(1));
+            state.cursor.row = state
+                .cursor
+                .row
+                .min(state.lines.iter_row().count().saturating_sub(1));
         }
         if state.mode == EditorMode::Visual {
             set_selection_with_lines(&mut state.selection, state.cursor, &state.lines);
@@ -463,11 +473,11 @@ fn move_big_word_forward_to_end_of_word(state: &mut EditorState) {
     for (next_char, index) in state.lines.iter().from(start_index) {
         if next_char.is_some_and(char::is_ascii_whitespace) {
             if index == start_index
-                && state
-                    .lines
-                    .iter_row()
-                    .nth(index.row)
-                    .is_some_and(|row| row.iter().skip(index.col).all(|ch| ch.is_ascii_whitespace()))
+                && state.lines.iter_row().nth(index.row).is_some_and(|row| {
+                    row.iter()
+                        .skip(index.col)
+                        .all(|ch| ch.is_ascii_whitespace())
+                })
             {
                 state.cursor = index;
             }
@@ -510,7 +520,11 @@ fn move_big_word_backward(state: &mut EditorState) {
                 .lines
                 .iter_row()
                 .nth(start_index.row)
-                .is_some_and(|row| row.iter().take(start_index.col).all(|ch| ch.is_ascii_whitespace())))
+                .is_some_and(|row| {
+                    row.iter()
+                        .take(start_index.col)
+                        .all(|ch| ch.is_ascii_whitespace())
+                }))
     {
         start_index.row = start_index.row.saturating_sub(1);
         start_index.col = state.lines.last_col_index(start_index.row);

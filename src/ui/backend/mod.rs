@@ -639,9 +639,7 @@ mod tests {
 
     use super::*;
     use crate::ui::{
-        display::{
-            DisplayModel, DisplayRenderer, OverlayModel, PaletteOverlayModel,
-        },
+        display::{DisplayModel, DisplayRenderer, OverlayModel, PaletteOverlayModel},
         transcript::strip_ansi,
     };
 

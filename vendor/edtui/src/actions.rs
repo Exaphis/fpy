@@ -32,8 +32,8 @@ pub use self::insert::{AppendNewline, InsertChar, InsertNewline, LineBreak};
 pub use self::motion::{
     MoveBackward, MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
     MoveForward, MoveForwardForInsert, MoveHalfPageDown, MoveHalfPageUp, MovePageDown, MovePageUp,
-    MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward,
-    MoveWordForward, MoveWordForwardToEndOfWord,
+    MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp,
+    MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord,
 };
 pub use self::search::{
     AppendCharToSearch, FindFirst, FindNext, FindPrevious, RemoveCharFromSearch,

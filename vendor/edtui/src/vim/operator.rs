@@ -1,6 +1,8 @@
 use jagged::index::{Index2, RowIndex};
 
-use crate::{clipboard::ClipboardTrait, helper::ensure_non_empty_lines, EditorMode, EditorState, Lines};
+use crate::{
+    clipboard::ClipboardTrait, helper::ensure_non_empty_lines, EditorMode, EditorState, Lines,
+};
 
 use super::range::{RangeKind, TextRange};
 
@@ -100,7 +102,8 @@ pub(crate) fn paste_after(state: &mut EditorState) {
         && !text.contains('\n')
         && line_len > 0
         && state.cursor.col + 1 >= line_len;
-    let restores_single_deleted_char = restores_empty_line_deleted_char || restores_eol_deleted_char;
+    let restores_single_deleted_char =
+        restores_empty_line_deleted_char || restores_eol_deleted_char;
     if !restores_single_deleted_char {
         state.capture();
     }
@@ -279,7 +282,12 @@ enum ShiftDirection {
     Right,
 }
 
-fn shift_lines(state: &mut EditorState, range: TextRange, direction: ShiftDirection, capture: bool) {
+fn shift_lines(
+    state: &mut EditorState,
+    range: TextRange,
+    direction: ShiftDirection,
+    capture: bool,
+) {
     let row_count = state.lines.iter_row().count();
     if row_count == 0 {
         return;
@@ -348,9 +356,7 @@ fn apply_linewise_edit(
     range: TextRange,
     capture: bool,
 ) {
-    if state.lines.iter_row().count() == 1
-        && state.lines.len_col(0).unwrap_or_default() == 0
-    {
+    if state.lines.iter_row().count() == 1 && state.lines.len_col(0).unwrap_or_default() == 0 {
         if !state.vim_last_yank_linewise || state.clip.get_text().is_empty() {
             state.clip.set_text("\n".to_string());
             state.vim_last_yank_linewise = true;
@@ -411,7 +417,11 @@ fn apply_linewise_edit(
 }
 
 fn capture_linewise_undo_state(state: &mut EditorState, range: TextRange) {
-    state.capture_with_cursor_and_span(state.cursor, range.start.row.saturating_sub(1), range.end.row + 1);
+    state.capture_with_cursor_and_span(
+        state.cursor,
+        range.start.row.saturating_sub(1),
+        range.end.row + 1,
+    );
 }
 
 fn place_cursor_after_linewise_edit(
@@ -456,7 +466,10 @@ fn extract_range(state: &mut EditorState, range: TextRange) -> Lines {
                     .nth(range.start.row)
                     .map(|row| row.iter().collect::<String>())
                     .unwrap_or_default();
-                if let Some(row) = state.lines.get_mut(jagged::index::RowIndex::new(range.start.row)) {
+                if let Some(row) = state
+                    .lines
+                    .get_mut(jagged::index::RowIndex::new(range.start.row))
+                {
                     row.clear();
                 }
                 state.cursor = range.start;

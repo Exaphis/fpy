@@ -13,14 +13,12 @@ use crate::actions::search::{StartBackwardSearch, StartSearch};
 #[cfg(feature = "system-editor")]
 use crate::actions::OpenSystemEditor;
 use crate::actions::{
-    Action, AppendCharToSearch, AppendNewline, Chainable, DeleteChar, Execute,
-    FindFirst, FindNext, FindPrevious, InsertChar, InsertNewline, LineBreak, MoveBackward,
-    MoveBigWordBackward, MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown,
-    MoveForward, MoveForwardForInsert, MoveHalfPageUp, MoveToEndOfLine, MoveToFirst,
-    MoveToMatchinBracket, MoveToStartOfLine, MoveUp, MoveWordBackward, MoveWordForward,
-    MoveWordForwardToEndOfWord,
-    Paste, Redo, RemoveChar, RemoveCharFromSearch, SelectCurrentSearch, StopSearch, SwitchMode,
-    Undo,
+    Action, AppendCharToSearch, AppendNewline, Chainable, DeleteChar, Execute, FindFirst, FindNext,
+    FindPrevious, InsertChar, InsertNewline, LineBreak, MoveBackward, MoveBigWordBackward,
+    MoveBigWordForward, MoveBigWordForwardToEndOfWord, MoveDown, MoveForward, MoveForwardForInsert,
+    MoveHalfPageUp, MoveToEndOfLine, MoveToFirst, MoveToMatchinBracket, MoveToStartOfLine, MoveUp,
+    MoveWordBackward, MoveWordForward, MoveWordForwardToEndOfWord, Paste, Redo, RemoveChar,
+    RemoveCharFromSearch, SelectCurrentSearch, StopSearch, SwitchMode, Undo,
 };
 use crate::events::KeyInput;
 use crate::vim::{
@@ -785,7 +783,8 @@ impl KeyEventHandler {
 
         if mode == EditorMode::Normal {
             let handled = VimCommandExecutor::execute_handled(state, |state| {
-                self.vim_command_context().handle_normal_key(key_input, state)
+                self.vim_command_context()
+                    .handle_normal_key(key_input, state)
             });
             if handled {
                 if state.mode == EditorMode::Insert {
@@ -796,7 +795,8 @@ impl KeyEventHandler {
         }
         if mode == EditorMode::Visual
             && VimCommandExecutor::execute_handled(state, |state| {
-                self.vim_command_context().handle_visual_key(key_input, state)
+                self.vim_command_context()
+                    .handle_visual_key(key_input, state)
             })
         {
             return;
@@ -824,10 +824,8 @@ impl KeyEventHandler {
                             .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
                             .unwrap_or(0)
                     };
-                    state.vim_insert_capture_cursor_override = Some(crate::Index2::new(
-                        cursor_before_action.row,
-                        col,
-                    ));
+                    state.vim_insert_capture_cursor_override =
+                        Some(crate::Index2::new(cursor_before_action.row, col));
                 }
                 let entering_insert = VimCommandExecutor::execute_normal_action(&mut action, state);
                 if entering_insert {

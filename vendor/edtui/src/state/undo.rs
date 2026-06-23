@@ -89,12 +89,7 @@ impl EditorState {
         self.capture_with_cursor_and_span(cursor, cursor.row.saturating_sub(1), cursor.row + 1);
     }
 
-    pub(crate) fn capture_with_cursor_and_span(
-        &mut self,
-        cursor: Index2,
-        top: usize,
-        bot: usize,
-    ) {
+    pub(crate) fn capture_with_cursor_and_span(&mut self, cursor: Index2, top: usize, bot: usize) {
         if self.undo_transaction_depth > 0 && self.undo_transaction_captured {
             return;
         }
@@ -102,7 +97,9 @@ impl EditorState {
         let cursor = pending_cursor.unwrap_or(cursor);
         let lines = self.lines.clone();
         let line_count = lines.iter_row().count();
-        let top = pending_cursor.map_or(top, |pending| top.min(pending.row)).min(line_count);
+        let top = pending_cursor
+            .map_or(top, |pending| top.min(pending.row))
+            .min(line_count);
         let bot = bot.min(line_count + 1).max(top + 1);
         let editor_state = UndoState {
             lines: lines.clone(),
@@ -170,8 +167,8 @@ impl EditorState {
                 .redo_cursor_override
                 .or_else(|| redo_cursor_for_state(&prev.lines, &current_lines))
                 .unwrap_or(self.cursor);
-            let restore_insert_start =
-                prev.cursor.col == 0 && is_insert_at_cursor(&prev.lines, &current_lines, prev.cursor);
+            let restore_insert_start = prev.cursor.col == 0
+                && is_insert_at_cursor(&prev.lines, &current_lines, prev.cursor);
             let restore_insert_block_start = prev.entries.first().is_some_and(|entry| {
                 current_lines.iter_row().count() > prev.lines.iter_row().count()
                     && prev.cursor.row <= entry.top + entry.new_size
@@ -179,7 +176,8 @@ impl EditorState {
             if restore_insert_start || restore_insert_block_start {
                 current_cursor = prev.cursor;
             }
-            let changed_cursor = undo_redo_changed_cursor(&current_lines, &prev.lines, prev.cursor, &prev.entries);
+            let changed_cursor =
+                undo_redo_changed_cursor(&current_lines, &prev.lines, prev.cursor, &prev.entries);
             let current = UndoState {
                 entries: undo_entries_for_snapshots(&prev.lines, &current_lines),
                 lines: current_lines,
@@ -203,7 +201,8 @@ impl EditorState {
         };
         {
             let current_lines = self.lines.clone();
-            let current_cursor = first_changed_position(&current_lines, &prev.lines).unwrap_or(self.cursor);
+            let current_cursor =
+                first_changed_position(&current_lines, &prev.lines).unwrap_or(self.cursor);
             let current = UndoState {
                 entries: undo_entries_for_snapshots(&prev.lines, &current_lines),
                 lines: current_lines,
@@ -212,7 +211,8 @@ impl EditorState {
             };
             let restore_insert_start =
                 prev.cursor.col == 0 && is_insert_at_cursor(&self.lines, &prev.lines, prev.cursor);
-            let changed_cursor = undo_redo_changed_cursor(&self.lines, &prev.lines, prev.cursor, &prev.entries);
+            let changed_cursor =
+                undo_redo_changed_cursor(&self.lines, &prev.lines, prev.cursor, &prev.entries);
             self.lines = prev.lines;
             self.cursor = if restore_insert_start {
                 prev.cursor
@@ -333,9 +333,12 @@ fn vim_undoredo_cursor(saved_cursor: Index2, changed_cursor: Index2, lines: &Lin
             .and_then(|row| row.iter().position(|ch| !ch.is_ascii_whitespace()))
             .unwrap_or(0);
     }
-    cursor.col = cursor
-        .col
-        .min(lines.len_col(cursor.row).unwrap_or_default().saturating_sub(1));
+    cursor.col = cursor.col.min(
+        lines
+            .len_col(cursor.row)
+            .unwrap_or_default()
+            .saturating_sub(1),
+    );
     cursor
 }
 
