@@ -1,6 +1,6 @@
 use jagged::index::{Index2, RowIndex};
 
-use crate::{clipboard::ClipboardTrait, EditorMode, EditorState, Lines};
+use crate::{clipboard::ClipboardTrait, helper::ensure_non_empty_lines, EditorMode, EditorState, Lines};
 
 use super::range::{RangeKind, TextRange};
 
@@ -464,6 +464,7 @@ fn extract_range(state: &mut EditorState, range: TextRange) -> Lines {
             }
             let text = state.lines.extract(range.start..end);
             state.cursor = range.start;
+            ensure_non_empty_lines(&mut state.lines, &mut state.cursor);
             text
         }
     }
@@ -504,9 +505,7 @@ fn extract_linewise(state: &mut EditorState, start_row: usize, end_row: usize) -
         }
         state.lines.remove(RowIndex::new(start_row));
     }
-    if state.lines.is_empty() {
-        state.lines.push(Vec::<char>::new());
-    }
+    ensure_non_empty_lines(&mut state.lines, &mut state.cursor);
     Lines::from(text)
 }
 
@@ -522,6 +521,18 @@ mod tests {
         clipboard::{ClipboardTrait, InternalClipboard},
         Index2,
     };
+
+    #[test]
+    fn delete_char_preserves_blank_row_after_deleting_last_char() {
+        let mut state = EditorState::new(Lines::from("a"));
+        state.cursor = Index2::new(0, 0);
+
+        delete_char(&mut state, 1);
+
+        assert_eq!(state.cursor, Index2::new(0, 0));
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.lines.len(), 1);
+    }
 
     #[test]
     fn applies_characterwise_delete_yank_and_change() {

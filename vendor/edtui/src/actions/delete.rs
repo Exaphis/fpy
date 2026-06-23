@@ -3,7 +3,7 @@ use jagged::index::RowIndex;
 use super::Execute;
 use crate::{
     clipboard::ClipboardTrait,
-    helper::{is_out_of_bounds, max_col_insert},
+    helper::{ensure_non_empty_lines, is_out_of_bounds, max_col_insert},
     state::selection::Selection,
     vim::{
         motion as vim_motion,
@@ -37,6 +37,7 @@ impl Execute for RemoveChar {
 
             let removed_col = index.col;
             let _ = lines.remove(*index);
+            ensure_non_empty_lines(lines, index);
             let len_col = lines.len_col(index.row).unwrap_or_default();
             index.col = index.col.min(len_col.saturating_sub(1));
             if removed_col >= len_col {
@@ -107,6 +108,7 @@ fn delete_char(lines: &mut Lines, index: &mut Index2) {
         index.col = index.col.min(max_col);
         move_left(lines, index);
         let _ = lines.remove(*index);
+        ensure_non_empty_lines(lines, index);
     }
 }
 
@@ -144,6 +146,7 @@ fn delete_char_forward(lines: &mut Lines, index: &mut Index2) {
     }
 
     let _ = lines.remove(*index);
+    ensure_non_empty_lines(lines, index);
 }
 
 /// Deletes from cursor to the end of the current word (Emacs Alt+d / Vim dw).
@@ -776,6 +779,7 @@ pub(crate) fn delete_selection(state: &mut EditorState, selection: &Selection) -
     state.cursor = selection.start();
     state.clamp_column();
     let extracted = selection.extract_from(&mut state.lines);
+    ensure_non_empty_lines(&mut state.lines, &mut state.cursor);
     clamp_cursor_to_buffer(state);
     extracted
 }
@@ -876,6 +880,19 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_char_preserves_blank_row_after_deleting_last_char() {
+        let mut state = EditorState::new(Lines::from("a"));
+        state.mode = EditorMode::Normal;
+        state.cursor = Index2::new(0, 0);
+
+        RemoveChar(1).execute(&mut state);
+
+        assert_eq!(state.cursor, Index2::new(0, 0));
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.lines.len(), 1);
+    }
+
+    #[test]
     fn test_delete_char() {
         let mut state = test_state();
 
@@ -951,6 +968,18 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_selection_preserves_blank_row_after_deleting_all_text() {
+        let mut state = EditorState::new(Lines::from("a"));
+        let selection = Selection::new(Index2::new(0, 0), Index2::new(0, 0));
+
+        delete_selection(&mut state, &selection);
+
+        assert_eq!(state.cursor, Index2::new(0, 0));
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.lines.len(), 1);
+    }
+
+    #[test]
     fn test_delete_selection() {
         let mut state = test_state();
         let st = Index2::new(0, 1);
@@ -1006,6 +1035,19 @@ mod tests {
         DeleteCharForward(1).execute(&mut state);
         assert_eq!(state.cursor, Index2::new(0, 10));
         assert_eq!(state.lines, Lines::from("llo World!Next line"));
+    }
+
+    #[test]
+    fn test_delete_char_forward_preserves_blank_row_after_deleting_last_char() {
+        let mut state = EditorState::new(Lines::from("a"));
+        state.mode = EditorMode::Insert;
+        state.cursor = Index2::new(0, 0);
+
+        DeleteCharForward(1).execute(&mut state);
+
+        assert_eq!(state.cursor, Index2::new(0, 0));
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.lines.len(), 1);
     }
 
     #[test]

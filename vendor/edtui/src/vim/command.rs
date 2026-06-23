@@ -1,6 +1,7 @@
 use crate::{
     clipboard::ClipboardTrait,
     events::key::input::{self, KeyInput},
+    helper::ensure_non_empty_lines,
     state::selection::set_selection_with_lines,
     EditorMode, EditorState,
 };
@@ -610,6 +611,7 @@ fn change_leading_indent_word(editor: &mut EditorState) -> bool {
     for _ in 0..leading_spaces {
         yanked.push(' ');
         editor.lines.remove(start);
+        ensure_non_empty_lines(&mut editor.lines, &mut editor.cursor);
     }
     editor.clip.set_text(yanked);
     editor.vim_last_yank_linewise = false;

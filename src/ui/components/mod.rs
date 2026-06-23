@@ -128,7 +128,14 @@ impl Component for EditorComponent<'_> {
             })
             .collect::<Vec<_>>();
 
+        debug_assert!(
+            !rows.is_empty(),
+            "edtui render plan returned no rows; empty buffers should render one blank row"
+        );
         if rows.is_empty() {
+            // Defensive fallback for invalid editor states. Normal empty buffers should
+            // render as one blank edtui row; keep the prompt visible rather than
+            // dropping the live editor entirely in release builds.
             rows.push(rendered_prompt);
         }
 

@@ -3,6 +3,14 @@ use ratatui_core::{layout::Rect, text::Span};
 
 use crate::{EditorMode, EditorState, Index2, Lines};
 
+/// Ensures the editor buffer keeps its invariant that even empty text has one blank row.
+pub(crate) fn ensure_non_empty_lines(lines: &mut Lines, index: &mut Index2) {
+    if lines.is_empty() {
+        lines.push(Vec::new());
+        *index = Index2::new(0, 0);
+    }
+}
+
 /// Inserts a character into the lines data at the given `index`.
 pub(crate) fn insert_char(lines: &mut Lines, index: &mut Index2, ch: char, skip_move: bool) {
     if lines.len() == index.row {
