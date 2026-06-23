@@ -704,7 +704,7 @@ mod tests {
         assert_eq!(snapshot.expected_scrollback_rows, vec!["first".to_string()]);
         assert_eq!(
             stripped(&snapshot.visible_rows),
-            vec!["first", "In [?]: ab"]
+            vec!["first", "      1 ab"]
         );
         assert_eq!(
             backend.last_update_kind(),

@@ -1,5 +1,8 @@
-use edtui::EditorView;
-use ratatui::layout::{Position, Rect};
+use edtui::{EditorView, LineNumbers};
+use ratatui::{
+    layout::{Position, Rect},
+    style::{Color, Style},
+};
 
 use super::{
     display::{
@@ -78,31 +81,48 @@ impl Component for EditorComponent<'_> {
         };
         let rendered_prompt = render_editor_prompt(prompt);
         let prompt_width = display_width(prompt);
-        if prompt_width >= width as usize {
+        let use_line_number_gutter = is_ipython_prompt(prompt);
+        let gutter_width = if use_line_number_gutter {
+            prompt_width.max(line_number_gutter_width(self.editor.text.lines().count()))
+        } else {
+            prompt_width
+        };
+        if gutter_width >= width as usize {
             return render_wrapped_editor_fallback(&rendered_prompt, &self.editor.text, width);
         }
 
-        let content_width = width.saturating_sub(prompt_width as u16).max(1);
+        let edtui_gutter_width = if use_line_number_gutter {
+            line_number_gutter_width(self.editor.text.lines().count())
+        } else {
+            0
+        };
+        let content_width = width.saturating_sub(gutter_width as u16).max(1);
+        let plan_width = content_width.saturating_add(edtui_gutter_width as u16);
         let mut state = self
             .editor
             .render_state
             .clone()
             .unwrap_or_else(|| build_editor_state(&self.editor.text));
-        let plan = EditorView::new(&mut state)
+        let mut view = EditorView::new(&mut state)
             .theme(editor_theme())
             .wrap(true)
-            .syntax_highlighter(editor_syntax_highlighter())
-            .render_plan(Rect::new(0, 0, content_width, u16::MAX));
+            .syntax_highlighter(editor_syntax_highlighter());
+        if use_line_number_gutter {
+            view = view.line_numbers(LineNumbers::Absolute);
+        }
+        let plan = view.render_plan(Rect::new(0, 0, plan_width, u16::MAX));
 
         let mut rows = plan
             .rows
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                let prefix = if index == 0 {
+                let prefix = if use_line_number_gutter {
+                    line_number_gutter(row.gutter.as_ref(), gutter_width)
+                } else if index == 0 {
                     rendered_prompt.clone()
                 } else {
-                    " ".repeat(prompt_width)
+                    " ".repeat(gutter_width)
                 };
                 format!("{prefix}{}", spans_to_ansi(&row.spans))
             })
@@ -119,8 +139,10 @@ impl Component for EditorComponent<'_> {
             .min(rows.len().saturating_sub(1));
         let cursor_col = plan
             .cursor
-            .map(|cursor| prompt_width + cursor.position.x as usize)
-            .unwrap_or(prompt_width)
+            .map(|cursor| {
+                gutter_width + (cursor.position.x as usize).saturating_sub(edtui_gutter_width)
+            })
+            .unwrap_or(gutter_width)
             .min(width.saturating_sub(1) as usize) as u16;
 
         rows.into_iter()
@@ -146,6 +168,23 @@ fn render_editor_prompt(prompt: &str) -> String {
 
 fn is_ipython_prompt(prompt: &str) -> bool {
     prompt.starts_with("In [") && prompt.ends_with(": ")
+}
+
+fn line_number_gutter_width(visible_lines: usize) -> usize {
+    visible_lines.max(1).to_string().len() + 1
+}
+
+fn line_number_gutter(gutter: Option<&ratatui::text::Span<'static>>, width: usize) -> String {
+    let text = gutter.map(|gutter| gutter.content.as_ref()).unwrap_or("");
+    let gutter_text = if text.is_empty() {
+        " ".repeat(width)
+    } else {
+        format!("{text:>number_width$} ", number_width = width.saturating_sub(1))
+    };
+    render_styled_line(&StyledLine::new(vec![StyledSegment::raw(
+        gutter_text,
+        Style::default().fg(Color::DarkGray),
+    )]))
 }
 
 fn cursor_style_for_mode(mode: edtui::EditorMode) -> FrameCursorStyle {
@@ -442,8 +481,8 @@ mod tests {
 
         let rows = EditorComponent::new(&editor).render(80);
 
-        assert_eq!(strip_ansi(&rows[0].text), "In [3]: x = 1");
-        assert!(rows[0].text.starts_with("\u{1b}[36mIn [3]: \u{1b}[0m"));
+        assert_eq!(strip_ansi(&rows[0].text), "      1 x = 1");
+        assert!(rows[0].text.starts_with("\u{1b}[90m      1 \u{1b}[0m"));
     }
 
     #[test]
@@ -456,10 +495,9 @@ mod tests {
         let editor_rows = EditorComponent::new(&editor).render(80);
         let transcript = highlighted_execute_input(Some(1), "time.sleep(1)");
 
-        assert_eq!(
-            rgb_sequences(after_prompt_reset(&editor_rows[0].text)),
-            rgb_sequences(after_prompt_reset(&transcript))
-        );
+        let editor_colors = rgb_sequences(&editor_rows[0].text);
+        let transcript_colors = rgb_sequences(after_prompt_reset(&transcript));
+        assert!(editor_colors.iter().all(|color| transcript_colors.contains(color)));
     }
 
     #[test]
@@ -472,11 +510,10 @@ mod tests {
 
         let rows = EditorComponent::new(&editor).render(80);
 
-        assert!(rows[0].text.contains("\u{1b}[36mIn [1]: \u{1b}[0m"));
         assert!(rows[0].text.contains("\u{1b}[38;2;"));
         assert_eq!(
             rows[0].cursor_marker.map(|marker| marker.position),
-            Some(Position::new("In [1]: time.sleep(1)".len() as u16, 0))
+            Some(Position::new("      1 time.sleep(1)".len() as u16, 0))
         );
     }
 
@@ -494,7 +531,7 @@ mod tests {
             rows.iter()
                 .map(|row| strip_ansi(&row.text))
                 .collect::<Vec<_>>(),
-            vec!["In [1]: abcd", "        ef"]
+            vec!["      1 abcd", "        ef"]
         );
         assert_eq!(
             rows.last()
@@ -538,7 +575,25 @@ mod tests {
             rows.iter()
                 .map(|row| strip_ansi(&row.text))
                 .collect::<Vec<_>>(),
-            vec!["In [3]: abc", "        def"]
+            vec!["      1 abc", "      2 def"]
+        );
+    }
+
+    #[test]
+    fn editor_component_preserves_trailing_blank_line() {
+        let editor = EditorModel {
+            text: "abc\n".to_string(),
+            prompt: "In [3]: ".to_string(),
+            ..EditorModel::default()
+        };
+
+        let rows = EditorComponent::new(&editor).render(80);
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| strip_ansi(&row.text))
+                .collect::<Vec<_>>(),
+            vec!["      1 abc", "      2 "]
         );
     }
 

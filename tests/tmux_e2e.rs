@@ -132,7 +132,7 @@ fn frame_backend_basic_transcript_smoke() {
     assert_contains(&output.after, "In [1]: 1+1");
     assert_contains(&output.after, "Out[1]: 2");
     assert_last_prompt_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
-    assert_contains(&output.after_ansi, "\u{1b}[36mIn [2]: ");
+    assert_contains(&output.after_ansi, "\u{1b}[90m      1 ");
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn frame_backend_second_invocation_after_exit_echoes_typed_input() {
     };
 
     assert_contains(&output.after, "fpy 0.1.0");
-    assert_contains(&output.after, "In [1]: abc");
+    assert_line_contains_all(&output.after, &["1", "abc"]);
     assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
 }
 
@@ -828,6 +828,8 @@ fn vim_open_below_grows_on_first_try() {
         return;
     };
 
+    assert_line_contains_all(&output.after, &["1", "abc"]);
+    assert_line_contains_all(&output.after, &["2"]);
     assert_line_contains_all(&output.after, &["INS", "In [1]", "Ctrl-P palette"]);
 }
 
@@ -1214,8 +1216,8 @@ fn history_search_matches_multiline_cells_and_loads_previewed_code() {
         return;
     };
 
-    assert_contains(&output.after, "In [1]: import torch");
-    assert_contains(&output.after, "        torch.cuda.is_available()");
+    assert_line_contains_all(&output.after, &["1", "import torch"]);
+    assert_line_contains_all(&output.after, &["2", "torch.cuda.is_available()"]);
     assert_line_contains_all(&output.after, &["INS", "In [1]", "[1/1]", "Ctrl-P palette"]);
 }
 

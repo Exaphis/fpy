@@ -503,6 +503,7 @@ case "$ACTION" in
     ;;
   vim-open-below)
     wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -l "abc"
     tmux send-keys -t "$SESSION" Escape
     wait_for_prompt_line_text "$SESSION" "NAV" "vim-open-below-normal"
     tmux send-keys -t "$SESSION" o

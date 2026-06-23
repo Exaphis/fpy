@@ -668,11 +668,11 @@ mod tests {
         assert_eq!(frame.full_rows[1].kind, RowKind::LiveUi);
         assert_eq!(
             stripped(&frame.visible_rows()),
-            vec!["ready", "In [?]: 2 + 2"]
+            vec!["ready", "      1 2 + 2"]
         );
         assert_eq!(
             frame.cursor.position,
-            Some(Position::new("In [?]: 2 + 2".len() as u16, 1))
+            Some(Position::new("      1 2 + 2".len() as u16, 1))
         );
     }
 
@@ -688,7 +688,7 @@ mod tests {
 
         let frame = DisplayRenderer.render(&model, Size::new(80, 24));
 
-        assert_eq!(stripped(&frame.visible_rows()), vec!["In [?]: "]);
+        assert_eq!(stripped(&frame.visible_rows()), vec!["      1 "]);
         assert!(
             frame
                 .full_rows
@@ -708,11 +708,11 @@ mod tests {
 
         assert_eq!(
             stripped(&frame.visible_rows()),
-            vec!["In [1]: x", "Kernel busy"]
+            vec!["      1 x", "Kernel busy"]
         );
         assert_eq!(
             frame.cursor.position,
-            Some(Position::new("In [1]: x".len() as u16, 0))
+            Some(Position::new("      1 x".len() as u16, 0))
         );
         assert_eq!(frame.cursor.style, FrameCursorStyle::Bar);
     }
@@ -728,10 +728,10 @@ mod tests {
 
         let frame = DisplayRenderer.render(&model, Size::new(80, 2));
 
-        assert_eq!(stripped(&frame.visible_rows()), vec!["three", "In [1]: x"]);
+        assert_eq!(stripped(&frame.visible_rows()), vec!["three", "      1 x"]);
         assert_eq!(
             frame.cursor.position,
-            Some(Position::new("In [1]: x".len() as u16, 3))
+            Some(Position::new("      1 x".len() as u16, 3))
         );
     }
 

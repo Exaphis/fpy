@@ -87,8 +87,10 @@ impl LineWrapper {
             }
         }
 
-        // Add any remaining content as the last line
-        if !current_line.is_empty() {
+        // Add any remaining content as the last line. Empty source lines still
+        // occupy one visual row; otherwise wrapped render plans drop blank
+        // editor rows (for example Vim `o` after a non-empty line).
+        if !current_line.is_empty() || wrapped_lines.is_empty() {
             wrapped_lines.push(current_line);
         }
 
