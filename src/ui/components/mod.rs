@@ -692,6 +692,27 @@ mod tests {
     }
 
     #[test]
+    fn overlay_component_preserves_history_result_ansi_highlighting() {
+        let overlay = OverlayModel::HistorySearch(crate::ui::display::HistorySearchOverlayModel {
+            query: "x".to_string(),
+            results: vec![crate::ui::display::HistorySearchResultModel {
+                summary: "\u{1b}[38;2;1;2;3mx\u{1b}[0m = 1".to_string(),
+                selected: true,
+            }],
+            selected: 0,
+            preview_lines: Vec::new(),
+        });
+
+        let rows = OverlayComponent::new(&overlay).render(80);
+        let result = rows
+            .iter()
+            .find(|row| strip_ansi(&row.text) == "> x = 1")
+            .expect("highlighted result row");
+
+        assert!(result.text.contains("\u{1b}[38;2;1;2;3m"));
+    }
+
+    #[test]
     fn overlay_component_preserves_history_preview_ansi_highlighting() {
         let overlay = OverlayModel::HistorySearch(crate::ui::display::HistorySearchOverlayModel {
             query: "x".to_string(),

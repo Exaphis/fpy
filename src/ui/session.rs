@@ -2,16 +2,15 @@ use std::io::{Write, stdout};
 
 use anyhow::Result;
 use crossterm::{
-    cursor::{MoveTo, MoveToColumn, SetCursorStyle, Show},
+    cursor::{MoveToColumn, SetCursorStyle, Show},
     event::{
         DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
         PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     style::ResetColor,
-    terminal::{Clear, ClearType, EnableLineWrap, disable_raw_mode, enable_raw_mode},
+    terminal::{EnableLineWrap, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::layout::Rect;
 
 pub(super) struct TerminalSession {
     restored: bool,
@@ -36,25 +35,22 @@ impl TerminalSession {
         self.restored
     }
 
-    pub(super) fn shutdown(&mut self, pane: Rect) -> Result<()> {
+    pub(super) fn shutdown_at_current_cursor(&mut self) -> Result<()> {
         if self.restored {
             return Ok(());
         }
 
         let mut handle = stdout();
         let _ = execute!(handle, DisableBracketedPaste, PopKeyboardEnhancementFlags);
-        write!(handle, "\x1b[r\x1b[0m")?;
+        write!(handle, "\x1b7\x1b[r\x1b8\x1b[0m")?;
         execute!(
             handle,
             Show,
             SetCursorStyle::DefaultUserShape,
             ResetColor,
-            EnableLineWrap
+            EnableLineWrap,
+            MoveToColumn(0)
         )?;
-        for row in pane.y..pane.bottom() {
-            execute!(handle, MoveTo(0, row), Clear(ClearType::UntilNewLine))?;
-        }
-        execute!(handle, MoveTo(0, pane.y), MoveToColumn(0))?;
         handle.flush()?;
         disable_raw_mode()?;
         execute!(

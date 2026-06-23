@@ -9,17 +9,8 @@ This file is for future Codex instances working in this repo.
 Key design goals:
 
 - own canonical transcript/display state in `fpy` and render it into the normal terminal
-- keep normal terminal scrollback semantically faithful to committed cell inputs/outputs
-- do not treat terminal scrollback as the canonical transcript source of truth
 - avoid alternate-screen behavior
 - feel closer to IPython than to a fullscreen TUI app
-
-Display/scrollback policy:
-
-- Byte-for-byte historical screen layout is not a goal. Resize, reflow, and redraw may change wrapping, styling, or visible layout.
-- Scrollback fidelity means committed transcript-content fidelity: no duplicated, missing, stale, reordered, or mangled committed cell inputs/outputs.
-- Live UI rows such as the editor, footer, status, palettes, and history search should not leak into scrollback as transcript content.
-- Full redraw/recovery paths may be pi-like, but be careful with terminal scrollback clears (`CSI 3J`): clearing all scrollback is acceptable only as an explicit recovery/strategy choice, not as an accidental default.
 
 ## Important Files
 
@@ -48,7 +39,7 @@ Display/scrollback policy:
   Component-style renderers for transcript, editor, footer, and overlays.
 
 - [`src/ui/backend/`](src/ui/backend)
-  Recording backend and differential normal-terminal crossterm backend.
+  Recording backend and Pi-style normal-terminal backend.
 
 - [`src/ui/session.rs`](src/ui/session.rs)
   Raw mode, bracketed paste, keyboard protocol setup, and exit cleanup.
@@ -143,6 +134,19 @@ Do not trust non-interactive PTY behavior for terminal bugs unless tmux shows th
 - Bracketed paste is enabled in [`src/ui/mod.rs`](src/ui/mod.rs). Pasted text is normalized from `\r\n` / `\r` to `\n` before being handed to `edtui`.
 
 - Frame backend changes must keep committed transcript rows distinct from live UI rows. Transcript growth may append; live UI edits, resize, and recovery should repaint without duplicating committed transcript content.
+- The active normal-terminal direction is Pi-style projection rendering. `DisplayModel` / `TerminalFrame.full_rows` are the canonical logical buffer; the backend is only a terminal projection cache. Do not add transcript-vs-live append bookkeeping to the Pi backend.
+
+- The Pi-style backend should not track startup origin or physical addressable rows. Preserve shell context on first render by writing without clearing. After that, use logical line-buffer diffing, viewport-top tracking, and relative movement. If a visible short projection grows in place, create room by moving to the old projection bottom, emitting the required `\r\n` rows, and repainting; do not purge scrollback for ordinary visible growth.
+
+- Unsafe Pi-style recovery is allowed to clear screen and scrollback (`CSI 2J`, home, `CSI 3J`) and redraw from canonical state, but it should be reserved for truly unsafe diffs such as changed rows above the previous viewport, viewport movement upward, resize/reflow, or non-tail growth that moves the viewport down.
+
+- Tail appends must scroll by viewport delta: `new_viewport_top.saturating_sub(previous_viewport_top)`. Do not special-case tail append as a single newline; multi-row appends must keep physical and logical viewports aligned.
+
+- Pi-style differential writes should build a complete body before entering synchronized output. Fallible movement/repaint computation must happen before `CSI ? 2026 h` is added, or the disable sequence must otherwise be guaranteed.
+
+- `TerminalFrame.full_rows` are expected to be width-shaped by components/display rendering. The Pi backend enforces this with ANSI-aware visible-width checks because unexpected terminal wrapping invalidates logical cursor-row tracking. Fix over-wide rows in `src/ui/components/`, `src/ui/display.rs`, or width-sensitive model construction rather than relaxing the backend contract.
+
+- When building width-sensitive UI state in `AppUi`, refresh terminal size first so component models and backend frame size use the same width.
 
 - The biggest remaining architectural tension is between `fpy` wanting shell-like inline behavior and `edtui` being a generic `ratatui` editor widget. Since `edtui` is vendored, prefer making editor-core/Vim-fidelity changes in `vendor/edtui` rather than adding more local workarounds.
 
@@ -166,7 +170,7 @@ Current likely candidates for future vendored `edtui` work:
 ## Practical Guidance
 
 - Prefer fixing terminal behavior with the smallest possible change in `src/ui/display.rs`, `src/ui/components/`, `src/ui/backend/`, or `src/ui/session.rs`.
-- If a bug only appears when the prompt is near the bottom of the screen, check frame classification and visible-row repainting in `src/ui/backend/` first.
+- If a bug only appears when the prompt is near the bottom of the screen, check Pi-style viewport math, visible-growth room creation, tail append viewport-delta scrolling, and exit cursor placement in `src/ui/backend/` first.
 - If a bug only appears during editing, check whether it is an `edtui` behavior. Prefer fixing such behavior in `vendor/edtui` before adding `fpy`-specific glue.
 - If you change prompt sizing or viewport logic, rerun tmux repros immediately.
 

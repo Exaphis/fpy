@@ -1,15 +1,11 @@
 use std::io::{self, Write};
 
-use crossterm::{
-    cursor::{Hide, MoveTo, MoveToColumn, SetCursorStyle, Show},
-    queue,
-    style::Print,
-    terminal::{self, Clear, ClearType},
-};
+use crossterm::terminal;
 use ratatui::layout::Size;
 use serde::Serialize;
 
-use super::display::{CursorState, FrameCursorStyle, RowKind, TerminalFrame};
+use super::display::{CursorState, FrameCursorStyle, RowKind, TerminalFrame, TerminalRow};
+use super::transcript::display_width;
 
 pub(crate) trait TerminalBackend {
     fn size(&mut self) -> io::Result<Size>;
@@ -46,46 +42,43 @@ pub(crate) struct RecordingBackend {
     snapshot: Option<TestSnapshot>,
 }
 
-pub(crate) struct CrosstermMainScreenBackend<W: Write> {
+pub(crate) struct PiStyleMainScreenBackend<W: Write> {
     writer: W,
     size: Size,
-    origin_y: u16,
-    previous_origin_y: Option<u16>,
-    last_visible_row_count: usize,
-    previous_committed_rows: Vec<String>,
-    previous_size: Option<Size>,
-    previous_visible_rows: Vec<String>,
-    previous_append_safe: bool,
-    needs_full_projection_reset: bool,
-    pending_scrollback_recovery: bool,
+    previous_lines: Vec<String>,
+    previous_width: u16,
+    previous_height: u16,
+    previous_viewport_top: usize,
+    hardware_cursor_row: usize,
     last_update_kind: Option<FrameUpdateKind>,
 }
 
-impl<W: Write> CrosstermMainScreenBackend<W> {
-    pub(crate) fn new(writer: W, size: Size) -> Self {
-        Self::with_origin(writer, size, 0)
-    }
+const SYNC_OUTPUT_ENABLE: &str = "\x1b[?2026h";
+const SYNC_OUTPUT_DISABLE: &str = "\x1b[?2026l";
+const CSI_RESET: &str = "\x1b[0m";
+const CSI_CLEAR_LINE: &str = "\x1b[2K";
+const CSI_CLEAR_SCREEN: &str = "\x1b[2J";
+const CSI_CLEAR_SCROLLBACK: &str = "\x1b[3J";
+const CSI_HOME: &str = "\x1b[H";
+const CSI_HIDE_CURSOR: &str = "\x1b[?25l";
+const CSI_SHOW_CURSOR: &str = "\x1b[?25h";
 
-    pub(crate) fn with_origin(writer: W, size: Size, origin_y: u16) -> Self {
+fn sync_output(body: String) -> String {
+    format!("{SYNC_OUTPUT_ENABLE}{body}{SYNC_OUTPUT_DISABLE}")
+}
+
+impl<W: Write> PiStyleMainScreenBackend<W> {
+    pub(crate) fn new(writer: W, size: Size) -> Self {
         Self {
             writer,
             size,
-            origin_y,
-            previous_origin_y: None,
-            last_visible_row_count: 0,
-            previous_committed_rows: Vec::new(),
-            previous_size: None,
-            previous_visible_rows: Vec::new(),
-            previous_append_safe: false,
-            needs_full_projection_reset: false,
-            pending_scrollback_recovery: false,
+            previous_lines: Vec::new(),
+            previous_width: size.width,
+            previous_height: size.height,
+            previous_viewport_top: 0,
+            hardware_cursor_row: 0,
             last_update_kind: None,
         }
-    }
-
-    #[cfg(test)]
-    fn last_update_kind(&self) -> Option<FrameUpdateKind> {
-        self.last_update_kind
     }
 
     #[cfg(test)]
@@ -93,143 +86,361 @@ impl<W: Write> CrosstermMainScreenBackend<W> {
         &self.writer
     }
 
-    fn draw_origin_y(&self, size: Size) -> u16 {
-        self.origin_y.min(size.height.saturating_sub(1))
+    #[cfg(test)]
+    fn last_update_kind(&self) -> Option<FrameUpdateKind> {
+        self.last_update_kind
     }
 
-    fn visible_rows(&self, frame: &TerminalFrame) -> (Vec<String>, usize, u16) {
-        let origin_y = self.draw_origin_y(frame.size);
-        let available_height = frame.size.height.saturating_sub(origin_y).max(1) as usize;
-        let start = frame.full_rows.len().saturating_sub(available_height);
-        let rows = frame.full_rows[start..]
-            .iter()
-            .map(|row| row.text.clone())
-            .collect();
-        (rows, start, origin_y)
+    fn viewport_top_for(&self, line_count: usize) -> usize {
+        line_count.saturating_sub(self.size.height as usize)
     }
 
-    fn draw_visible_rows(&mut self, frame: &TerminalFrame) -> io::Result<(usize, u16)> {
-        let (visible_rows, first_full_row, origin_y) = self.visible_rows(frame);
-        if let Some(previous_origin_y) = self.previous_origin_y
-            && previous_origin_y != origin_y
+    fn full_render(
+        &mut self,
+        new_lines: &[String],
+        cursor: &CursorState,
+        clear: bool,
+    ) -> io::Result<()> {
+        let mut output = String::new();
+        output.push_str(SYNC_OUTPUT_ENABLE);
+        if clear {
+            output.push_str(CSI_HIDE_CURSOR);
+            output.push_str(CSI_HOME);
+            output.push_str(CSI_CLEAR_SCREEN);
+            output.push_str(CSI_CLEAR_SCROLLBACK);
+            output.push_str(CSI_HOME);
+        }
+        for (index, line) in new_lines.iter().enumerate() {
+            if index > 0 {
+                output.push_str("\r\n");
+            }
+            output.push_str(line);
+            output.push_str(CSI_RESET);
+        }
+
+        self.hardware_cursor_row = new_lines.len().saturating_sub(1);
+        let viewport_top = self.viewport_top_for(new_lines.len());
+        self.position_cursor_into(&mut output, cursor, viewport_top);
+        output.push_str(SYNC_OUTPUT_DISABLE);
+        self.writer.write_all(output.as_bytes())?;
+        self.writer.flush()?;
+
+        self.previous_lines = new_lines.to_vec();
+        self.previous_width = self.size.width;
+        self.previous_height = self.size.height;
+        self.previous_viewport_top = viewport_top;
+        Ok(())
+    }
+
+    fn differential_render(
+        &mut self,
+        new_lines: &[String],
+        cursor: &CursorState,
+    ) -> io::Result<()> {
+        let old_len = self.previous_lines.len();
+        let new_len = new_lines.len();
+        let max_len = old_len.max(new_len);
+        let first_changed = (0..max_len).find(|&index| {
+            self.previous_lines.get(index).map(String::as_str)
+                != new_lines.get(index).map(String::as_str)
+        });
+        let Some(first_changed) = first_changed else {
+            let mut body = String::new();
+            self.position_cursor_into(&mut body, cursor, self.previous_viewport_top);
+            self.writer.write_all(sync_output(body).as_bytes())?;
+            self.writer.flush()?;
+            return Ok(());
+        };
+        let last_changed = (0..max_len)
+            .rev()
+            .find(|&index| {
+                self.previous_lines.get(index).map(String::as_str)
+                    != new_lines.get(index).map(String::as_str)
+            })
+            .unwrap_or(first_changed);
+
+        let old_viewport_top = self.previous_viewport_top;
+        let new_viewport_top = self.viewport_top_for(new_len);
+        let is_tail_append = old_len <= new_len
+            && self
+                .previous_lines
+                .iter()
+                .zip(new_lines.iter())
+                .all(|(old, new)| old == new);
+        if first_changed < old_viewport_top || new_viewport_top < old_viewport_top {
+            self.last_update_kind = Some(FrameUpdateKind::Recovery);
+            return self.full_render(new_lines, cursor, true);
+        }
+        if new_viewport_top > old_viewport_top && !is_tail_append {
+            self.last_update_kind = Some(FrameUpdateKind::Recovery);
+            return self.full_render(new_lines, cursor, true);
+        }
+
+        let mut current_viewport_top = old_viewport_top;
+        let height = self.size.height as usize;
+        let viewport_scroll = if is_tail_append {
+            new_viewport_top.saturating_sub(old_viewport_top)
+        } else {
+            0
+        };
+        let mut body = String::new();
+        let visible_growth_scroll = if new_viewport_top == 0
+            && old_viewport_top == 0
+            && old_len < height
+            && new_len > old_len
         {
-            for row in 0..self.previous_visible_rows.len() {
-                queue!(
-                    self.writer,
-                    MoveTo(0, previous_origin_y.saturating_add(row as u16)),
-                    Clear(ClearType::CurrentLine)
+            new_len
+                .saturating_sub(old_len)
+                .min(height.saturating_sub(old_len))
+        } else {
+            0
+        };
+        let pre_scroll = visible_growth_scroll;
+        if pre_scroll > 0 {
+            if old_len > 0 {
+                self.move_to_logical_row_into(
+                    &mut body,
+                    old_len.saturating_sub(1),
+                    old_viewport_top,
                 )?;
             }
-        }
-        for (row, text) in visible_rows.iter().enumerate() {
-            if self.previous_visible_rows.get(row) == Some(text) {
-                continue;
+            for _ in 0..pre_scroll {
+                body.push_str("\r\n");
             }
-            queue!(
-                self.writer,
-                MoveTo(0, origin_y.saturating_add(row as u16)),
-                Clear(ClearType::CurrentLine),
-                Print(text)
-            )?;
+            self.hardware_cursor_row = old_len.saturating_sub(1).saturating_add(pre_scroll);
         }
-        for row in visible_rows.len()..self.previous_visible_rows.len() {
-            queue!(
-                self.writer,
-                MoveTo(0, origin_y.saturating_add(row as u16)),
-                Clear(ClearType::CurrentLine)
-            )?;
+        if viewport_scroll > 0 {
+            let old_visible_bottom = old_viewport_top
+                .saturating_add(height.saturating_sub(1))
+                .min(old_len.saturating_sub(1));
+            self.move_to_logical_row_into(&mut body, old_visible_bottom, old_viewport_top)?;
+            for _ in 0..viewport_scroll {
+                body.push_str("\r\n");
+            }
+            current_viewport_top = new_viewport_top;
+            self.hardware_cursor_row = old_visible_bottom.saturating_add(viewport_scroll);
         }
-        self.previous_visible_rows = visible_rows;
-        self.previous_origin_y = Some(origin_y);
-        self.last_visible_row_count = self.previous_visible_rows.len();
-        Ok((first_full_row, origin_y))
-    }
 
-    fn append_committed_rows(&mut self, rows: &[String]) -> io::Result<()> {
-        for row in rows {
-            queue!(
-                self.writer,
-                MoveToColumn(0),
-                Clear(ClearType::CurrentLine),
-                Print(row),
-                Print("\r\n")
-            )?;
+        let new_visible_bottom = new_viewport_top
+            .saturating_add(height.saturating_sub(1))
+            .min(new_len.saturating_sub(1));
+        if new_len < old_len {
+            let old_visible_bottom = current_viewport_top
+                .saturating_add(height.saturating_sub(1))
+                .min(old_len.saturating_sub(1));
+            if old_visible_bottom.saturating_sub(new_visible_bottom) >= height {
+                self.last_update_kind = Some(FrameUpdateKind::Recovery);
+                return self.full_render(new_lines, cursor, true);
+            }
+            let clear_start = first_changed
+                .max(current_viewport_top)
+                .max(new_viewport_top);
+            for row in clear_start..=old_visible_bottom {
+                self.clear_logical_row_into(&mut body, row, current_viewport_top)?;
+            }
         }
+
+        let repaint_all_visible = pre_scroll > 0 || viewport_scroll > 0;
+        let repaint_start = if repaint_all_visible {
+            new_viewport_top
+        } else {
+            first_changed.max(new_viewport_top)
+        };
+        let repaint_end = if new_len == 0 {
+            None
+        } else {
+            Some(last_changed.max(new_visible_bottom).min(new_visible_bottom))
+        };
+        if let Some(repaint_end) = repaint_end {
+            for row in repaint_start..=repaint_end {
+                if let Some(line) = new_lines.get(row) {
+                    self.repaint_logical_row_into(&mut body, row, new_viewport_top, line)?;
+                }
+            }
+        }
+
+        self.position_cursor_into(&mut body, cursor, new_viewport_top);
+        self.writer.write_all(sync_output(body).as_bytes())?;
+        self.writer.flush()?;
+
+        self.previous_lines = new_lines.to_vec();
+        self.previous_width = self.size.width;
+        self.previous_height = self.size.height;
+        self.previous_viewport_top = new_viewport_top;
         Ok(())
     }
 
-    fn full_projection_reset(&mut self) -> io::Result<()> {
-        queue!(
-            self.writer,
-            Hide,
-            MoveTo(0, 0),
-            Clear(ClearType::All),
-            Clear(ClearType::Purge),
-            MoveTo(0, 0)
-        )?;
-        self.origin_y = 0;
-        self.previous_origin_y = None;
-        self.last_visible_row_count = 0;
-        self.previous_committed_rows.clear();
-        self.previous_visible_rows.clear();
-        self.previous_append_safe = false;
-        self.needs_full_projection_reset = false;
-        self.pending_scrollback_recovery = false;
-        self.previous_size = None;
+    fn move_to_logical_row_into(
+        &mut self,
+        output: &mut String,
+        target_row: usize,
+        viewport_top: usize,
+    ) -> io::Result<()> {
+        let height = self.size.height as usize;
+        if target_row < viewport_top || target_row >= viewport_top.saturating_add(height) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target row outside visible viewport",
+            ));
+        }
+        let current_screen_row = self.hardware_cursor_row.saturating_sub(viewport_top);
+        let target_screen_row = target_row.saturating_sub(viewport_top);
+        if target_screen_row > current_screen_row {
+            output.push_str(&format!("\x1b[{}B", target_screen_row - current_screen_row));
+        } else if current_screen_row > target_screen_row {
+            output.push_str(&format!("\x1b[{}A", current_screen_row - target_screen_row));
+        }
+        output.push('\r');
+        self.hardware_cursor_row = target_row;
         Ok(())
+    }
+
+    fn clear_logical_row_into(
+        &mut self,
+        output: &mut String,
+        target_row: usize,
+        viewport_top: usize,
+    ) -> io::Result<()> {
+        self.move_to_logical_row_into(output, target_row, viewport_top)?;
+        output.push_str(CSI_CLEAR_LINE);
+        output.push_str(CSI_RESET);
+        Ok(())
+    }
+
+    fn repaint_logical_row_into(
+        &mut self,
+        output: &mut String,
+        target_row: usize,
+        viewport_top: usize,
+        line: &str,
+    ) -> io::Result<()> {
+        self.move_to_logical_row_into(output, target_row, viewport_top)?;
+        output.push_str(CSI_CLEAR_LINE);
+        output.push_str(line);
+        output.push_str(CSI_RESET);
+        Ok(())
+    }
+
+    fn position_cursor_into(
+        &mut self,
+        output: &mut String,
+        cursor: &CursorState,
+        viewport_top: usize,
+    ) {
+        let Some(position) = cursor.position.filter(|_| cursor.visible) else {
+            output.push_str(CSI_HIDE_CURSOR);
+            return;
+        };
+        let target_row = position.y as usize;
+        let height = self.size.height as usize;
+        if target_row < viewport_top || target_row >= viewport_top.saturating_add(height) {
+            output.push_str(CSI_HIDE_CURSOR);
+            return;
+        }
+        if self
+            .move_to_logical_row_into(output, target_row, viewport_top)
+            .is_err()
+        {
+            output.push_str(CSI_HIDE_CURSOR);
+            return;
+        }
+        output.push_str(&format!(
+            "\x1b[{}G",
+            position
+                .x
+                .min(self.size.width.saturating_sub(1))
+                .saturating_add(1)
+        ));
+        output.push_str(cursor_style_sequence(cursor.style));
+        output.push_str(CSI_SHOW_CURSOR);
+        self.hardware_cursor_row = target_row;
     }
 
     pub(crate) fn clear_screen(&mut self) -> io::Result<()> {
-        queue!(self.writer, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
-        self.origin_y = 0;
-        self.previous_origin_y = None;
-        self.last_visible_row_count = 0;
-        self.previous_committed_rows.clear();
-        self.previous_visible_rows.clear();
-        self.previous_append_safe = false;
-        self.needs_full_projection_reset = false;
-        self.pending_scrollback_recovery = false;
-        self.previous_size = None;
+        self.previous_lines.clear();
+        self.previous_viewport_top = 0;
+        self.hardware_cursor_row = 0;
         self.last_update_kind = Some(FrameUpdateKind::Recovery);
+        self.writer
+            .write_all(format!("{CSI_HIDE_CURSOR}{CSI_HOME}{CSI_CLEAR_SCREEN}").as_bytes())?;
         self.writer.flush()
     }
 
     pub(crate) fn prepare_shutdown(&mut self) -> io::Result<u16> {
-        let origin_y = self.draw_origin_y(self.size);
-        let shell_row = origin_y.saturating_add(self.last_visible_row_count as u16);
-        let row = if shell_row >= self.size.height {
-            let bottom = self.size.height.saturating_sub(1);
-            queue!(self.writer, MoveTo(0, bottom), Print("\r\n"))?;
-            bottom
-        } else {
-            queue!(
-                self.writer,
-                MoveTo(0, shell_row),
-                Clear(ClearType::CurrentLine)
-            )?;
-            shell_row
-        };
+        let viewport_top = self.previous_viewport_top;
+        let visible_len = self
+            .previous_lines
+            .len()
+            .saturating_sub(viewport_top)
+            .min(self.size.height as usize);
+        let bottom_row = viewport_top.saturating_add(visible_len.saturating_sub(1));
+        let mut output = String::new();
+        output.push_str(CSI_RESET);
+        output.push_str(CSI_SHOW_CURSOR);
+        if visible_len > 0 {
+            let _ = self.move_to_logical_row_into(&mut output, bottom_row, viewport_top);
+        }
+        output.push_str("\r\n");
+        self.writer.write_all(output.as_bytes())?;
         self.writer.flush()?;
-        Ok(row)
+        Ok(self.size.height.saturating_sub(1))
     }
 }
 
-impl CrosstermMainScreenBackend<std::io::Stdout> {
-    #[allow(dead_code)]
-    pub(crate) fn stdout() -> io::Result<Self> {
-        let (width, height) = terminal::size()?;
-        Ok(Self::new(std::io::stdout(), Size::new(width, height)))
-    }
-
+impl PiStyleMainScreenBackend<std::io::Stdout> {
     pub(crate) fn refresh_size(&mut self) -> io::Result<Size> {
         let (width, height) = terminal::size()?;
-        let new_size = Size::new(width, height);
-        if new_size != self.size {
-            self.origin_y = self.origin_y.min(height.saturating_sub(1));
-            self.needs_full_projection_reset = true;
-        }
-        self.size = new_size;
+        self.size = Size::new(width, height);
         Ok(self.size)
+    }
+}
+
+impl<W: Write> TerminalBackend for PiStyleMainScreenBackend<W> {
+    fn size(&mut self) -> io::Result<Size> {
+        Ok(self.size)
+    }
+
+    fn draw_frame(&mut self, frame: TerminalFrame) -> io::Result<()> {
+        if frame.size.width == 0 || frame.size.height == 0 {
+            return Ok(());
+        }
+
+        for (row_index, row) in frame.full_rows.iter().enumerate() {
+            let width = display_width(&row.text);
+            if width > frame.size.width as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "rendered row {row_index} exceeds terminal width: {width} > {}",
+                        frame.size.width
+                    ),
+                ));
+            }
+        }
+
+        self.size = frame.size;
+        let new_lines = frame
+            .full_rows
+            .iter()
+            .map(|row| row.text.clone())
+            .collect::<Vec<_>>();
+        let update_kind = if self.previous_lines.is_empty() {
+            FrameUpdateKind::Initial
+        } else if self.previous_width != frame.size.width
+            || self.previous_height != frame.size.height
+        {
+            FrameUpdateKind::ResizeOrReflow
+        } else {
+            FrameUpdateKind::LiveUiOnly
+        };
+        self.last_update_kind = Some(update_kind);
+        if self.previous_lines.is_empty() {
+            return self.full_render(&new_lines, &frame.cursor, false);
+        }
+        if self.previous_width != frame.size.width || self.previous_height != frame.size.height {
+            return self.full_render(&new_lines, &frame.cursor, true);
+        }
+        self.differential_render(&new_lines, &frame.cursor)
     }
 }
 
@@ -265,10 +476,13 @@ impl RecordingBackend {
             &committed_rows,
         );
 
+        let append_can_project = update_kind == FrameUpdateKind::TranscriptAppend
+            && self.previous_append_safe
+            && frame.transcript_append_safe;
+        let append_needs_recovery =
+            update_kind == FrameUpdateKind::TranscriptAppend && !append_can_project;
         let recover_scrollback = update_kind == FrameUpdateKind::Recovery
-            || ((self.pending_scrollback_recovery
-                || (update_kind == FrameUpdateKind::TranscriptAppend
-                    && !self.previous_append_safe))
+            || ((self.pending_scrollback_recovery || append_needs_recovery)
                 && frame.transcript_append_safe);
 
         match update_kind {
@@ -284,7 +498,7 @@ impl RecordingBackend {
                 self.expected_scrollback_rows.clear();
                 self.pending_scrollback_recovery = false;
             }
-            FrameUpdateKind::TranscriptAppend if self.previous_append_safe => {
+            FrameUpdateKind::TranscriptAppend if append_can_project => {
                 self.expected_scrollback_rows
                     .extend_from_slice(&committed_rows[self.previous_committed_rows.len()..]);
             }
@@ -297,10 +511,27 @@ impl RecordingBackend {
             }
         }
 
-        self.previous_committed_rows = committed_rows;
+        let snapshot_frame = if append_needs_recovery && !frame.transcript_append_safe {
+            recovery_pending_frame(frame, &self.previous_committed_rows)
+        } else {
+            frame.clone()
+        };
+        if !append_needs_recovery || recover_scrollback {
+            self.previous_committed_rows = committed_rows;
+        }
         self.previous_size = Some(frame.size);
         self.previous_append_safe = frame.transcript_append_safe;
         self.last_update_kind = Some(update_kind);
+        self.snapshot = Some(TestSnapshot {
+            full_rows: snapshot_frame
+                .full_rows
+                .iter()
+                .map(|row| row.text.clone())
+                .collect(),
+            visible_rows: snapshot_frame.visible_rows(),
+            expected_scrollback_rows: self.expected_scrollback_rows.clone(),
+            cursor: snapshot_frame.cursor,
+        });
     }
 }
 
@@ -317,6 +548,42 @@ fn committed_rows(frame: &TerminalFrame) -> Vec<String> {
         .filter(|row| row.kind == RowKind::CommittedTranscript)
         .map(|row| row.text.clone())
         .collect()
+}
+
+fn recovery_pending_frame(frame: &TerminalFrame, committed_rows: &[String]) -> TerminalFrame {
+    let current_committed_count = frame
+        .full_rows
+        .iter()
+        .filter(|row| row.kind == RowKind::CommittedTranscript)
+        .count();
+    let dropped_committed_rows = current_committed_count.saturating_sub(committed_rows.len());
+    let mut full_rows = committed_rows
+        .iter()
+        .cloned()
+        .map(|text| TerminalRow {
+            text,
+            kind: RowKind::CommittedTranscript,
+        })
+        .collect::<Vec<_>>();
+    full_rows.extend(
+        frame
+            .full_rows
+            .iter()
+            .filter(|row| row.kind == RowKind::LiveUi)
+            .cloned(),
+    );
+
+    let mut cursor = frame.cursor.clone();
+    if let Some(position) = cursor.position.as_mut() {
+        position.y = position.y.saturating_sub(dropped_committed_rows as u16);
+    }
+
+    TerminalFrame {
+        size: frame.size,
+        full_rows,
+        cursor,
+        transcript_append_safe: frame.transcript_append_safe,
+    }
 }
 
 fn classify_frame_update(
@@ -354,108 +621,15 @@ impl TerminalBackend for RecordingBackend {
     fn draw_frame(&mut self, frame: TerminalFrame) -> io::Result<()> {
         self.size = frame.size;
         self.update_scrollback_expectation(&frame);
-        self.snapshot = Some(TestSnapshot {
-            full_rows: frame.full_rows.iter().map(|row| row.text.clone()).collect(),
-            visible_rows: frame.visible_rows(),
-            expected_scrollback_rows: self.expected_scrollback_rows.clone(),
-            cursor: frame.cursor,
-        });
         Ok(())
     }
 }
 
-impl<W: Write> TerminalBackend for CrosstermMainScreenBackend<W> {
-    fn size(&mut self) -> io::Result<Size> {
-        Ok(self.size)
-    }
-
-    fn draw_frame(&mut self, frame: TerminalFrame) -> io::Result<()> {
-        let committed_rows = committed_rows(&frame);
-        let update_kind = classify_frame_update(
-            self.previous_size,
-            &self.previous_committed_rows,
-            frame.size,
-            &committed_rows,
-        );
-
-        let full_projection_reset = self.needs_full_projection_reset
-            || update_kind == FrameUpdateKind::ResizeOrReflow
-            || update_kind == FrameUpdateKind::Recovery
-            || ((self.pending_scrollback_recovery
-                || (update_kind == FrameUpdateKind::TranscriptAppend
-                    && !self.previous_append_safe))
-                && frame.transcript_append_safe);
-        if full_projection_reset {
-            self.full_projection_reset()?;
-        } else if update_kind == FrameUpdateKind::TranscriptAppend && self.previous_append_safe {
-            self.append_committed_rows(&committed_rows[self.previous_committed_rows.len()..])?;
-            self.previous_visible_rows.clear();
-        } else if update_kind == FrameUpdateKind::TranscriptAppend {
-            self.pending_scrollback_recovery = true;
-        }
-
-        let (first_full_row, origin_y) = self.draw_visible_rows(&frame)?;
-        draw_cursor(
-            &mut self.writer,
-            &frame.cursor,
-            first_full_row,
-            origin_y,
-            frame.size,
-        )?;
-        self.writer.flush()?;
-        self.previous_committed_rows = committed_rows;
-        self.previous_size = Some(frame.size);
-        self.previous_append_safe = frame.transcript_append_safe;
-        self.last_update_kind = Some(update_kind);
-        self.size = frame.size;
-        Ok(())
-    }
-}
-
-fn cursor_row_offset(cursor: &CursorState, first_full_row: usize, size: Size) -> Option<u16> {
-    let position = cursor.position.filter(|_| cursor.visible)?;
-    let frame_row = position.y as usize;
-    if frame_row < first_full_row {
-        return None;
-    }
-    let offset = (frame_row - first_full_row) as u16;
-    (offset < size.height).then_some(offset)
-}
-
-fn draw_cursor(
-    writer: &mut impl Write,
-    cursor: &CursorState,
-    first_full_row: usize,
-    origin_y: u16,
-    size: Size,
-) -> io::Result<()> {
-    if let Some(position) = cursor.position.filter(|_| cursor.visible) {
-        let Some(offset) = cursor_row_offset(cursor, first_full_row, size) else {
-            queue!(writer, Hide)?;
-            return Ok(());
-        };
-        let screen_y = origin_y.saturating_add(offset);
-        if screen_y >= size.height {
-            queue!(writer, Hide)?;
-            return Ok(());
-        }
-        queue!(
-            writer,
-            Show,
-            to_crossterm_cursor_style(cursor.style),
-            MoveTo(position.x.min(size.width.saturating_sub(1)), screen_y)
-        )?;
-    } else {
-        queue!(writer, Hide)?;
-    }
-    Ok(())
-}
-
-fn to_crossterm_cursor_style(style: FrameCursorStyle) -> SetCursorStyle {
+fn cursor_style_sequence(style: FrameCursorStyle) -> &'static str {
     match style {
-        FrameCursorStyle::Default => SetCursorStyle::DefaultUserShape,
-        FrameCursorStyle::Block => SetCursorStyle::SteadyBlock,
-        FrameCursorStyle::Bar => SetCursorStyle::SteadyBar,
+        FrameCursorStyle::Default => "\x1b[0 q",
+        FrameCursorStyle::Block => "\x1b[2 q",
+        FrameCursorStyle::Bar => "\x1b[6 q",
     }
 }
 
@@ -466,8 +640,7 @@ mod tests {
     use super::*;
     use crate::ui::{
         display::{
-            DisplayModel, DisplayRenderer, HistorySearchOverlayModel, HistorySearchResultModel,
-            OverlayModel, PaletteOverlayModel, StreamName,
+            DisplayModel, DisplayRenderer, OverlayModel, PaletteOverlayModel,
         },
         transcript::strip_ansi,
     };
@@ -595,6 +768,7 @@ mod tests {
 
         let snapshot = backend.snapshot().expect("snapshot");
         assert!(snapshot.expected_scrollback_rows.is_empty());
+        assert!(backend.previous_committed_rows.is_empty());
         assert_eq!(
             backend.last_update_kind(),
             Some(FrameUpdateKind::TranscriptAppend)
@@ -610,7 +784,7 @@ mod tests {
         );
         assert_eq!(
             backend.last_update_kind(),
-            Some(FrameUpdateKind::LiveUiOnly)
+            Some(FrameUpdateKind::TranscriptAppend)
         );
     }
 
@@ -626,303 +800,234 @@ mod tests {
         assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Initial));
     }
 
-    #[test]
-    fn main_screen_backend_appends_only_transcript_growth() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
-        let mut model = DisplayModel::new();
+    fn frame(size: Size, rows: &[&str], cursor: CursorState) -> TerminalFrame {
+        TerminalFrame {
+            size,
+            full_rows: rows
+                .iter()
+                .map(|text| TerminalRow {
+                    text: (*text).to_string(),
+                    kind: RowKind::CommittedTranscript,
+                })
+                .collect(),
+            cursor,
+            transcript_append_safe: true,
+        }
+    }
 
-        model.transcript.push_system("first");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 3));
-        let initial_len = backend.writer().len();
-
-        model.editor.text = "editing".to_string();
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 3));
-        let edit_output = String::from_utf8_lossy(&backend.writer()[initial_len..]);
-        assert!(!edit_output.contains("first\r\n"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::LiveUiOnly)
-        );
-
-        let before_append = backend.writer().len();
-        model.transcript.push_system("second");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 3));
-        let append_output = String::from_utf8_lossy(&backend.writer()[before_append..]);
-        assert!(append_output.contains("second\r\n"));
-        assert!(!append_output.contains("first\r\n"));
-        assert!(append_output.contains("\u{1b}[2Ksecond\r\n"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::TranscriptAppend)
-        );
+    fn hidden_cursor() -> CursorState {
+        CursorState::default()
     }
 
     #[test]
-    fn main_screen_backend_resets_after_palette_blocks_transcript_append() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 8));
-        let mut model = DisplayModel::new();
+    fn pi_style_first_render_preserves_shell_context() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
 
-        model.overlay = OverlayModel::Palette(PaletteOverlayModel {
-            items: vec![
-                "Quit".to_string(),
-                "Interrupt Kernel".to_string(),
-                "Restart Kernel".to_string(),
-            ],
-            selected: 1,
-        });
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-
-        let before_append = backend.writer().len();
-        model.overlay = OverlayModel::None;
-        model.transcript.push_system("kernel restarted");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-        let output = String::from_utf8_lossy(&backend.writer()[before_append..]);
-
-        assert!(output.contains("\u{1b}[2J"));
-        assert!(output.contains("\u{1b}[3J"));
-        assert!(!output.contains("kernel restarted\r\n"));
-        assert!(!output.contains("Interrupt Kernel\r\n"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::TranscriptAppend)
-        );
-    }
-
-    #[test]
-    fn main_screen_backend_defers_reset_until_overlay_closes() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 8));
-        let mut model = DisplayModel::new();
-
-        model.overlay = OverlayModel::Palette(PaletteOverlayModel {
-            items: vec![
-                "Quit".to_string(),
-                "Interrupt Kernel".to_string(),
-                "Restart Kernel".to_string(),
-            ],
-            selected: 1,
-        });
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-
-        let before_blocked_append = backend.writer().len();
-        model.transcript.push_system("kernel restarted");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-        let blocked_output = String::from_utf8_lossy(&backend.writer()[before_blocked_append..]);
-
-        assert!(!blocked_output.contains("kernel restarted\r\n"));
-        assert!(!blocked_output.contains("\u{1b}[3J"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::TranscriptAppend)
-        );
-
-        let before_overlay_close = backend.writer().len();
-        model.overlay = OverlayModel::None;
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-        let recovery_output = String::from_utf8_lossy(&backend.writer()[before_overlay_close..]);
-
-        assert!(recovery_output.contains("\u{1b}[2J"));
-        assert!(recovery_output.contains("\u{1b}[3J"));
-        assert!(!recovery_output.contains("Interrupt Kernel"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::LiveUiOnly)
-        );
-    }
-
-    #[test]
-    fn main_screen_backend_resets_after_history_search_blocks_transcript_append() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 8));
-        let mut model = DisplayModel::new();
-
-        model.overlay = OverlayModel::HistorySearch(HistorySearchOverlayModel {
-            query: "restart".to_string(),
-            results: vec![HistorySearchResultModel {
-                summary: "Restart Kernel".to_string(),
-                selected: true,
-            }],
-            selected: 0,
-            preview_lines: vec!["Restart Kernel".to_string()],
-        });
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-
-        let before_append = backend.writer().len();
-        model.overlay = OverlayModel::None;
-        model.transcript.push_system("kernel restarted");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 8));
-        let output = String::from_utf8_lossy(&backend.writer()[before_append..]);
-
-        assert!(output.contains("\u{1b}[2J"));
-        assert!(output.contains("\u{1b}[3J"));
-        assert!(!output.contains("kernel restarted\r\n"));
-        assert!(!output.contains("Restart Kernel\r\n"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::TranscriptAppend)
-        );
-    }
-
-    #[test]
-    fn main_screen_backend_full_resets_without_appending_on_resize() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
-        let mut model = DisplayModel::new();
-
-        model.transcript.push_system("abcdef");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 3));
-        let before_resize = backend.writer().len();
-
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(3, 3));
-        let resize_output = String::from_utf8_lossy(&backend.writer()[before_resize..]);
-
-        assert!(resize_output.contains("\u{1b}[2J"));
-        assert!(resize_output.contains("\u{1b}[3J"));
-        assert!(!resize_output.contains("abc\r\n"));
-        assert!(!resize_output.contains("def\r\n"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::ResizeOrReflow)
-        );
-        assert_eq!(backend.previous_origin_y, Some(0));
-        assert_eq!(
-            backend.previous_committed_rows,
-            vec!["abc".to_string(), "def".to_string()]
-        );
-        assert_eq!(
-            stripped(&backend.previous_visible_rows),
-            vec!["In ", "[?]", ": "]
-        );
-        assert_eq!(backend.previous_size, Some(Size::new(3, 3)));
-
-        let before_append = backend.writer().len();
-        model.transcript.push_system("ghi");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(3, 3));
-        let append_output = String::from_utf8_lossy(&backend.writer()[before_append..]);
-
-        assert!(append_output.contains("ghi\r\n"));
-        assert!(!append_output.contains("abc\r\n"));
-        assert!(!append_output.contains("\u{1b}[3J"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::TranscriptAppend)
-        );
-    }
-
-    #[test]
-    fn main_screen_backend_clears_stale_rows_after_shorter_frame() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 5));
-        let mut model = DisplayModel::new();
-
-        model.transcript.push_system("one");
-        model.transcript.push_system("two");
-        model.editor.text = "three".to_string();
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-        let before_shorter_frame = backend.writer().len();
-
-        model.transcript.entries.clear();
-        model.editor.text = "one".to_string();
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-        let output = String::from_utf8_lossy(&backend.writer()[before_shorter_frame..]);
-
-        assert!(output.contains("\u{1b}[2J"));
-        assert!(output.contains("\u{1b}[3J"));
-        assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Recovery));
-    }
-
-    #[test]
-    fn main_screen_backend_full_resets_when_stream_rows_coalesce() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 5));
-        let mut model = DisplayModel::new();
-
-        model.transcript.push_stream(StreamName::Stdout, "a");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-        let before_coalesced_stream = backend.writer().len();
-
-        model.transcript.push_stream(StreamName::Stdout, "b");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-        let output = String::from_utf8_lossy(&backend.writer()[before_coalesced_stream..]);
-
-        assert!(output.contains("\u{1b}[2J"));
-        assert!(output.contains("\u{1b}[3J"));
-        assert!(!output.contains("ab\r\n"));
-        assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Recovery));
-    }
-
-    #[test]
-    fn main_screen_backend_skips_unchanged_visible_rows() {
-        let mut renderer = DisplayRenderer;
-        let mut backend = CrosstermMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 5));
-        let mut model = DisplayModel::new();
-
-        model.transcript.push_system("stable");
-        model.editor.text = "a".to_string();
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-
-        let before_duplicate = backend.writer().len();
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-        let duplicate_output = String::from_utf8_lossy(&backend.writer()[before_duplicate..]);
-        assert!(!duplicate_output.contains("\u{1b}[2K"));
-        assert_eq!(
-            backend.last_update_kind(),
-            Some(FrameUpdateKind::LiveUiOnly)
-        );
-
-        let before_edit = backend.writer().len();
-        model.editor.text = "ab".to_string();
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 5));
-        let edit_output = String::from_utf8_lossy(&backend.writer()[before_edit..]);
-
-        assert_eq!(edit_output.matches("\u{1b}[2K").count(), 1);
-        assert!(!edit_output.contains("stable"));
-    }
-
-    #[test]
-    fn main_screen_backend_draws_relative_to_startup_origin() {
-        let mut renderer = DisplayRenderer;
-        let mut backend =
-            CrosstermMainScreenBackend::with_origin(Vec::<u8>::new(), Size::new(80, 10), 5);
-        let mut model = DisplayModel::new();
-
-        model.transcript.push_system("first");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 10));
-        let output = String::from_utf8_lossy(backend.writer());
-
-        assert!(output.contains("\u{1b}[6;1H\u{1b}[2Kfirst"));
-        assert!(output.contains("\u{1b}[7;1H\u{1b}[2K\u{1b}[36mIn [?]: "));
-        assert!(output.contains("\u{1b}[7;9H"));
-    }
-
-    #[test]
-    fn main_screen_backend_clips_frame_to_rows_below_origin() {
-        let mut renderer = DisplayRenderer;
-        let mut backend =
-            CrosstermMainScreenBackend::with_origin(Vec::<u8>::new(), Size::new(80, 3), 1);
-        let mut model = DisplayModel::new();
-
-        model.transcript.push_system("hidden");
-        model.transcript.push_system("visible");
-        render_into_main(&mut renderer, &mut backend, &model, Size::new(80, 3));
-        let output = String::from_utf8_lossy(backend.writer());
-
-        assert!(!output.contains("hidden"));
-        assert!(output.contains("\u{1b}[2;1H\u{1b}[2Kvisible"));
-        assert!(output.contains("\u{1b}[3;1H\u{1b}[2K\u{1b}[36mIn [?]: "));
-        assert!(output.contains("\u{1b}[3;9H"));
-    }
-
-    fn render_into_main(
-        renderer: &mut DisplayRenderer,
-        backend: &mut CrosstermMainScreenBackend<Vec<u8>>,
-        model: &DisplayModel,
-        size: Size,
-    ) {
         backend
-            .draw_frame(renderer.render(model, size))
+            .draw_frame(frame(Size::new(80, 3), &["one", "two"], hidden_cursor()))
             .expect("draw frame");
+
+        let output = String::from_utf8_lossy(backend.writer());
+        assert!(output.starts_with(SYNC_OUTPUT_ENABLE));
+        assert!(!output.contains(CSI_CLEAR_SCREEN));
+        assert!(!output.contains(CSI_CLEAR_SCROLLBACK));
+        assert!(!output.contains(CSI_HOME));
+        assert!(output.contains("one\u{1b}[0m\r\ntwo\u{1b}[0m"));
+        assert_eq!(backend.previous_lines, vec!["one", "two"]);
+        assert_eq!(backend.previous_viewport_top, 0);
+        assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Initial));
+    }
+
+    #[test]
+    fn pi_style_unsafe_change_above_viewport_triggers_full_clear() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
+        backend
+            .draw_frame(frame(
+                Size::new(80, 3),
+                &["one", "two", "three", "four"],
+                hidden_cursor(),
+            ))
+            .expect("initial draw");
+        let before = backend.writer().len();
+
+        backend
+            .draw_frame(frame(
+                Size::new(80, 3),
+                &["ONE", "two", "three", "four"],
+                hidden_cursor(),
+            ))
+            .expect("recovery draw");
+
+        let output = String::from_utf8_lossy(&backend.writer()[before..]);
+        assert!(output.contains(CSI_CLEAR_SCREEN));
+        assert!(output.contains(CSI_CLEAR_SCROLLBACK));
+        assert_eq!(backend.last_update_kind(), Some(FrameUpdateKind::Recovery));
+    }
+
+    #[test]
+    fn pi_style_append_scrolls_by_viewport_delta_and_repaints_tail() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
+        backend
+            .draw_frame(frame(Size::new(80, 3), &["one", "two"], hidden_cursor()))
+            .expect("initial draw");
+        let before = backend.writer().len();
+
+        backend
+            .draw_frame(frame(
+                Size::new(80, 3),
+                &["one", "two", "three", "four"],
+                hidden_cursor(),
+            ))
+            .expect("append draw");
+
+        let output = String::from_utf8_lossy(&backend.writer()[before..]);
+        assert!(output.contains("\r\n"));
+        assert!(output.contains("\u{1b}[2Ktwo\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[2Kthree\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[2Kfour\u{1b}[0m"));
+        assert!(!output.contains(CSI_CLEAR_SCREEN));
+        assert_eq!(backend.previous_viewport_top, 1);
+    }
+
+    #[test]
+    fn pi_style_multi_row_tail_append_scrolls_by_full_viewport_delta() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
+        backend
+            .draw_frame(frame(
+                Size::new(80, 3),
+                &["one", "two", "three"],
+                hidden_cursor(),
+            ))
+            .expect("initial draw");
+        let before = backend.writer().len();
+
+        backend
+            .draw_frame(frame(
+                Size::new(80, 3),
+                &["one", "two", "three", "four", "five"],
+                hidden_cursor(),
+            ))
+            .expect("append draw");
+
+        let output = String::from_utf8_lossy(&backend.writer()[before..]);
+        assert_eq!(output.matches("\r\n").count(), 2);
+        assert!(output.contains("\u{1b}[2Kthree\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[2Kfour\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[2Kfive\u{1b}[0m"));
+        assert_eq!(backend.previous_viewport_top, 2);
+    }
+
+    #[test]
+    fn pi_style_short_tail_append_creates_terminal_room_before_repaint() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 5));
+        backend
+            .draw_frame(frame(Size::new(80, 5), &["one", "two"], hidden_cursor()))
+            .expect("initial draw");
+        let before = backend.writer().len();
+
+        backend
+            .draw_frame(frame(
+                Size::new(80, 5),
+                &["one", "two", "three"],
+                hidden_cursor(),
+            ))
+            .expect("append draw");
+
+        let output = String::from_utf8_lossy(&backend.writer()[before..]);
+        let scroll_index = output.find("\r\n").expect("append creates terminal room");
+        let repaint_index = output.find("three").expect("tail row is repainted");
+        assert!(
+            scroll_index < repaint_index,
+            "terminal room should be created before repainting the appended row: {output:?}"
+        );
+        assert!(output.contains("\u{1b}[2Kone\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[2Ktwo\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[2Kthree\u{1b}[0m"));
+        assert!(!output.contains(CSI_CLEAR_SCREEN));
+        assert_eq!(backend.previous_viewport_top, 0);
+    }
+
+    #[test]
+    fn pi_style_safe_shrink_clears_stale_visible_rows_without_full_clear() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 5));
+        backend
+            .draw_frame(frame(
+                Size::new(80, 5),
+                &["one", "two", "three", "four", "five"],
+                hidden_cursor(),
+            ))
+            .expect("initial draw");
+        let before = backend.writer().len();
+
+        backend
+            .draw_frame(frame(
+                Size::new(80, 5),
+                &["one", "two", "THREE"],
+                hidden_cursor(),
+            ))
+            .expect("shrink draw");
+
+        let output = String::from_utf8_lossy(&backend.writer()[before..]);
+        assert!(!output.contains(CSI_CLEAR_SCREEN));
+        assert!(output.matches(CSI_CLEAR_LINE).count() >= 3);
+        assert!(output.contains("THREE"));
+        assert_eq!(
+            backend.previous_lines,
+            vec!["one".to_string(), "two".to_string(), "THREE".to_string()]
+        );
+    }
+
+    #[test]
+    fn pi_style_cursor_positioning_uses_relative_moves() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
+        backend
+            .draw_frame(frame(
+                Size::new(80, 3),
+                &["one", "two", "three"],
+                hidden_cursor(),
+            ))
+            .expect("initial draw");
+        let before = backend.writer().len();
+
+        let cursor = CursorState {
+            position: Some(ratatui::layout::Position::new(2, 1)),
+            style: FrameCursorStyle::Bar,
+            visible: true,
+        };
+        backend
+            .draw_frame(frame(Size::new(80, 3), &["one", "TWO", "three"], cursor))
+            .expect("cursor draw");
+
+        let output = String::from_utf8_lossy(&backend.writer()[before..]);
+        assert!(!output.contains("\u{1b}[2;3H"));
+        assert!(output.contains("\u{1b}[2G") || output.contains("\u{1b}[3G"));
+        assert!(output.contains(CSI_SHOW_CURSOR));
+    }
+
+    #[test]
+    fn pi_style_zero_sized_terminal_does_not_mutate_state() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(80, 3));
+        backend
+            .draw_frame(frame(Size::new(0, 0), &["one"], hidden_cursor()))
+            .expect("zero draw");
+
+        assert!(backend.writer().is_empty());
+        assert!(backend.previous_lines.is_empty());
+        assert_eq!(backend.previous_width, 80);
+        assert_eq!(backend.previous_height, 3);
+    }
+
+    #[test]
+    fn pi_style_rejects_rows_wider_than_terminal_width() {
+        let mut backend = PiStyleMainScreenBackend::new(Vec::<u8>::new(), Size::new(3, 3));
+
+        let error = backend
+            .draw_frame(frame(Size::new(3, 3), &["abcd"], hidden_cursor()))
+            .expect_err("over-wide row should fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("exceeds terminal width"));
+        assert!(backend.writer().is_empty());
+        assert!(backend.previous_lines.is_empty());
     }
 }

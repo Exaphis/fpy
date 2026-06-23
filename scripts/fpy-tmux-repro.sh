@@ -44,6 +44,7 @@ POLL_SECONDS="${POLL_SECONDS:-0.05}"
 EXIT_WAIT="${EXIT_WAIT:-0.2}"
 VISUAL_SENTINEL="${VISUAL_SENTINEL:-}"
 LONG_EDITOR_TEXT="${LONG_EDITOR_TEXT:-$(perl -e 'print "a" x 500')}"
+PRE_LAUNCH_FILL_LINES="${PRE_LAUNCH_FILL_LINES:-0}"
 
 mkdir -p "$ROOT/target"
 
@@ -330,6 +331,9 @@ fi
 tmux send-keys -t "$SESSION" "cd $ROOT" Enter
 if [ -n "$VISUAL_SENTINEL" ]; then
   tmux send-keys -t "$SESSION" "printf '%s\n' '$VISUAL_SENTINEL'" Enter
+fi
+if [ "$PRE_LAUNCH_FILL_LINES" -gt 0 ]; then
+  tmux send-keys -t "$SESSION" "for i in {1..$PRE_LAUNCH_FILL_LINES}; do echo filler-\$i; done" Enter
 fi
 tmux send-keys -t "$SESSION" "$FPY_CMD" Enter
 wait_for_usable_input "$SESSION"
@@ -623,6 +627,18 @@ case "$ACTION" in
         sleep 0.05
       done
     fi
+    ;;
+  history-search-close-then-print)
+    wait_for_usable_input "$SESSION"
+    tmux send-keys -t "$SESSION" C-r
+    sleep 0.1
+    if [ -n "$SEARCH_QUERY" ]; then
+      tmux send-keys -t "$SESSION" -l "$SEARCH_QUERY"
+      wait_for_text "$SESSION" "$SEARCH_QUERY" "history-search-query"
+    fi
+    tmux send-keys -t "$SESSION" Escape
+    wait_for_submit_ready "$SESSION"
+    submit_cell "$SESSION" "print('\\n'.join(str(i) for i in range(10)))"
     ;;
   history-search-load)
     wait_for_usable_input "$SESSION"

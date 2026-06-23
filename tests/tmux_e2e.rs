@@ -244,6 +244,32 @@ fn frame_backend_starts_below_shell_prompt_instead_of_top_of_screen() {
 }
 
 #[test]
+fn simple_expression_preserves_existing_scrollback() {
+    let sentinel = "simple-one-sentinel";
+    let Some(output) = run_repro(
+        "simple-expression-preserves-scrollback",
+        "none",
+        &[
+            ("VISUAL_SENTINEL", sentinel),
+            ("INPUTS", "1"),
+            ("CAPTURE_LINES", "120"),
+            ("EXIT_WAIT", "0.2"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, sentinel);
+    let sentinel_row = output.meta_value("sentinel_row");
+    let fpy_row = output.meta_value("fpy_row");
+    assert!(
+        fpy_row > sentinel_row,
+        "expected simple expression render to stay below existing shell output; sentinel_row={sentinel_row}, fpy_row={fpy_row}\n{}",
+        output.after
+    );
+}
+
+#[test]
 fn frame_backend_footer_keeps_ansi_status_highlighting() {
     let Some(output) = run_repro(
         "frame-backend-footer-ansi",
@@ -958,6 +984,59 @@ fn ctrl_j_moves_back_down_from_history_to_blank_input() {
 }
 
 #[test]
+fn bottom_print_preserves_input_cell_after_scrolling_output() {
+    let Some(output) = run_repro(
+        "bottom-print-preserves-input",
+        "none",
+        &[
+            ("TMUX_SIZE", "80x12"),
+            (
+                "INPUTS",
+                "print('\\n'.join(str(i) for i in range(20)))\nprint('\\n'.join(str(i) for i in range(10)))",
+            ),
+            ("CAPTURE_LINES", "120"),
+            ("EXIT_WAIT", "0.2"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(
+        &output.after,
+        "In [2]: print('\\n'.join(str(i) for i in range(10)))",
+    );
+    for line in 0..=9 {
+        assert_contains(&output.after, &format!("\n{line}\n"));
+    }
+}
+
+#[test]
+fn bottom_started_stdout_preserves_all_lines() {
+    let Some(output) = run_repro(
+        "bottom-started-stdout",
+        "none",
+        &[
+            ("TMUX_SIZE", "80x12"),
+            ("PRE_LAUNCH_FILL_LINES", "11"),
+            ("PRE_INPUT", "print('\\n'.join(str(i) for i in range(8)))"),
+            ("INPUTS", "print('\\n'.join(str(i) for i in range(8)))"),
+            ("CAPTURE_LINES", "80"),
+            ("EXIT_WAIT", "0.2"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(
+        &output.after,
+        "In [1]: print('\\n'.join(str(i) for i in range(8)))",
+    );
+    for line in 0..=7 {
+        assert_contains(&output.after, &format!("\n{line}\n"));
+    }
+}
+
+#[test]
 fn history_search_shows_multiple_results_and_multiline_preview() {
     let history_dir = TempDir::new().expect("history dir");
     write_history_record(
@@ -1004,8 +1083,108 @@ fn history_search_shows_multiple_results_and_multiline_preview() {
     assert_contains(&output.after, "import torch …");
     assert_contains(&output.after, "preview");
     assert_contains(&output.after, "os.getcwd()");
-    assert_contains(&output.after_ansi, "\u{1b}[38;2;");
+    assert_contains(&output.after_ansi, "> \u{1b}[38;2;");
+    assert_contains(&output.after_ansi, "\u{1b}[39m");
     assert_contains(&output.after_ansi, "getcwd");
+}
+
+#[test]
+fn bottom_started_history_search_shows_results_not_just_preview() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "import os\nos.getcwd()",
+        Some(5_000_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "import time\ntime.sleep(1)\n42",
+        Some(1_000_000_000),
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "bottom-started-history-search",
+        "history-search-open",
+        &[
+            ("TMUX_SIZE", "80x12"),
+            ("PRE_LAUNCH_FILL_LINES", "11"),
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "0.05"),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
+            ("SEARCH_QUERY", "import"),
+            ("CAPTURE_LINES", "80"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(&output.after, "History Search");
+    assert_contains(&output.after, "query: import");
+    assert_contains(&output.after, "> import time …");
+    assert_contains(&output.after, "  import os …");
+    assert_contains(&output.after, "preview");
+}
+
+#[test]
+fn bottom_started_history_search_close_then_print_preserves_transcript() {
+    let history_dir = TempDir::new().expect("history dir");
+    write_history_record(
+        history_dir.path(),
+        "import os\nos.getcwd()",
+        Some(5_000_000),
+        None,
+    );
+    write_history_record(
+        history_dir.path(),
+        "import time\ntime.sleep(1)\n42",
+        Some(1_000_000_000),
+        None,
+    );
+
+    let Some(output) = run_repro(
+        "bottom-started-history-close-print",
+        "history-search-close-then-print",
+        &[
+            ("TMUX_SIZE", "80x12"),
+            ("PRE_LAUNCH_FILL_LINES", "11"),
+            ("PRE_INPUT", ""),
+            ("INPUTS", ""),
+            ("EXIT_WAIT", "0.2"),
+            (
+                "FPY_HISTORY_DIR",
+                history_dir.path().to_str().expect("utf8 path"),
+            ),
+            ("SEARCH_QUERY", "import"),
+            ("CAPTURE_LINES", "120"),
+        ],
+    ) else {
+        return;
+    };
+
+    assert_contains(
+        &output.after,
+        "In [1]: print('\\n'.join(str(i) for i in range(10)))",
+    );
+    for line in 0..=9 {
+        assert_contains(&output.after, &format!("\n{line}\n"));
+    }
+    let output_lines = output.after.lines().collect::<Vec<_>>();
+    let output_start = output_lines
+        .iter()
+        .position(|line| *line == "0")
+        .expect("output starts with 0");
+    assert_eq!(
+        &output_lines[output_start..output_start + 10],
+        ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    );
+    assert_line_count(&output.after, "Ctrl-P palette", 1);
+    assert_not_contains(&output.after, "History Search");
 }
 
 #[test]

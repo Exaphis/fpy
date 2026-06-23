@@ -4,7 +4,10 @@ use nucleo::{
     pattern::{CaseMatching, Normalization, Pattern},
 };
 
-use super::{duration_format::format_duration_ns, syntax::highlighted_python_lines};
+use super::{
+    duration_format::format_duration_ns, syntax::highlighted_python_lines,
+    transcript::display_width,
+};
 use crate::history::{HistoryEntry, HistoryOutcome};
 
 const HISTORY_SEARCH_RESULT_LIMIT: usize = 10;
@@ -43,29 +46,60 @@ impl HistorySearchEntry {
         search
     }
 
-    pub(super) fn summary(&self, width: usize) -> String {
-        let left = if self.line_count > 1 {
+    pub(super) fn highlighted_summary(&self, width: usize) -> String {
+        let plain_left = self.plain_summary_left();
+        let highlighted_left = syntax_highlighted_history_preview(&self.first_line)
+            .into_iter()
+            .next()
+            .map(|mut line| {
+                if line.contains("\u{1b}[")
+                    && !line.ends_with("\u{1b}[39m")
+                    && !line.ends_with("\u{1b}[0m")
+                {
+                    line.push_str("\u{1b}[39m");
+                }
+                if self.line_count > 1 {
+                    format!("{line} …")
+                } else {
+                    line
+                }
+            })
+            .unwrap_or_else(|| plain_left.clone());
+        self.summary_with_left(width, &highlighted_left)
+    }
+
+    fn plain_summary_left(&self) -> String {
+        if self.line_count > 1 {
             format!("{} …", self.first_line)
         } else {
             self.first_line.clone()
-        };
+        }
+    }
+
+    fn summary_with_left(&self, width: usize, left: &str) -> String {
         let right = self.metadata();
         if width == 0 {
             return String::new();
         }
         if right.is_empty() {
-            return truncate_chars(&left, width);
+            return if display_width(left) <= width {
+                left.to_string()
+            } else {
+                truncate_chars(&self.plain_summary_left(), width)
+            };
         }
         let right_width = right.chars().count();
         if right_width >= width {
             return truncate_chars(&right, width);
         }
         let left_width = width.saturating_sub(right_width + 1);
-        format!(
-            "{:<left_width$} {}",
-            truncate_chars(&left, left_width),
-            right
-        )
+        let rendered_left = if display_width(left) <= left_width {
+            left.to_string()
+        } else {
+            truncate_chars(&self.plain_summary_left(), left_width)
+        };
+        let padding = left_width.saturating_sub(display_width(&rendered_left));
+        format!("{rendered_left}{} {right}", " ".repeat(padding))
     }
 
     fn metadata(&self) -> String {
@@ -287,6 +321,30 @@ mod tests {
             "x = 1print(x)"
         );
         assert!(lines.iter().any(|line| line.contains("\u{1b}[")));
+    }
+
+    #[test]
+    fn history_search_summary_uses_highlighting_without_wrapping_long_entries() {
+        let entry = HistorySearchEntry::new("very_long_variable_name = 123".to_string());
+        let summary = entry.highlighted_summary(10);
+
+        assert_eq!(strip_ansi(&summary).chars().count(), 10);
+        assert_eq!(strip_ansi(&summary), "very_long_");
+    }
+
+    #[test]
+    fn history_search_highlighted_summary_resets_before_metadata_padding() {
+        let mut entry = HistorySearchEntry::new("import os".to_string());
+        entry.duration_ns = Some(5_000_000);
+        let summary = entry.highlighted_summary(30);
+
+        assert_eq!(strip_ansi(&summary), "import os               5.00ms");
+        let reset_index = summary.find("\u{1b}[39m").expect("foreground reset");
+        let metadata_index = summary.find("5.00ms").expect("metadata");
+        assert!(
+            reset_index < metadata_index,
+            "metadata should not inherit syntax color: {summary:?}"
+        );
     }
 
     #[test]

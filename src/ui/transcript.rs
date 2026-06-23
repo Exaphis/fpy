@@ -241,7 +241,7 @@ fn update_active_sgr(sequence: &str, active_sgr: &mut String) {
     if parameters.is_empty()
         || parameters
             .split(';')
-            .any(|parameter| parameter.parse::<u16>().ok() == Some(0))
+            .any(|parameter| matches!(parameter.parse::<u16>().ok(), Some(0 | 39 | 49)))
     {
         active_sgr.clear();
     } else {

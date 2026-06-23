@@ -389,7 +389,7 @@ impl DisplayRenderer {
         TerminalFrame {
             size,
             full_rows,
-            transcript_append_safe: !has_overlay && cursor.visible,
+            transcript_append_safe: !has_overlay,
             cursor,
         }
     }

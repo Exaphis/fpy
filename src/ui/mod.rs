@@ -16,7 +16,6 @@ mod transcript;
 
 use anyhow::Result;
 use crossterm::{
-    cursor,
     event::{Event, EventStream, KeyEvent, KeyEventKind},
     terminal,
 };
@@ -24,12 +23,12 @@ use edtui::EditorMode;
 use futures::StreamExt;
 use ratatui::layout::{Rect, Size};
 use std::{
-    io::{Stdout, Write, stdout},
+    io::{Stdout, stdout},
     time::{Duration, Instant},
 };
 
 use self::{
-    backend::{CrosstermMainScreenBackend, TerminalBackend},
+    backend::{PiStyleMainScreenBackend, TerminalBackend},
     display::{
         DisplayKernelStatus, DisplayModel, DisplayRenderer, HistorySearchOverlayModel,
         HistorySearchResultModel, MimeBundle, OverlayModel, PaletteOverlayModel,
@@ -77,7 +76,7 @@ enum OverlayKind {
 }
 
 pub struct AppUi {
-    frame_backend: CrosstermMainScreenBackend<Stdout>,
+    frame_backend: PiStyleMainScreenBackend<Stdout>,
     display_renderer: DisplayRenderer,
     terminal_session: TerminalSession,
     events: EventStream,
@@ -103,11 +102,9 @@ impl AppUi {
     pub fn new(connection_summary: String) -> Result<Self> {
         let terminal_session = TerminalSession::start()?;
         let (width, height) = terminal::size()?;
-        let mut stdout = stdout();
-        let origin_y = reserve_startup_rows(&mut stdout, height)?;
+        let stdout = stdout();
         let pane = Rect::new(0, 0, width, height);
-        let frame_backend =
-            CrosstermMainScreenBackend::with_origin(stdout, Size::new(width, height), origin_y);
+        let frame_backend = PiStyleMainScreenBackend::new(stdout, Size::new(width, height));
 
         Ok(Self {
             frame_backend,
@@ -316,6 +313,12 @@ impl AppUi {
                     .map(|entry| {
                         syntax_highlighted_history_preview(&entry.code)
                             .into_iter()
+                            .flat_map(|line| {
+                                crate::ui::transcript::wrap_ansi_to_width(
+                                    &line,
+                                    self.current_pane.width,
+                                )
+                            })
                             .take(visible_preview_rows)
                             .collect()
                     })
@@ -332,7 +335,7 @@ impl AppUi {
                         .filter_map(|(result_index, &entry_index)| {
                             self.history_entries.get(entry_index).map(|entry| {
                                 HistorySearchResultModel {
-                                    summary: entry.summary(result_summary_width),
+                                    summary: entry.highlighted_summary(result_summary_width),
                                     selected: result_index == self.history_search.selected,
                                 }
                             })
@@ -434,10 +437,8 @@ impl AppUi {
             return Ok(());
         }
 
-        let shell_row = self.frame_backend.prepare_shutdown()?;
-        let pane = Rect::new(0, shell_row, 0, 0);
-
-        self.terminal_session.shutdown(pane)
+        self.frame_backend.prepare_shutdown()?;
+        self.terminal_session.shutdown_at_current_cursor()
     }
 
     pub fn clear_screen(&mut self) -> Result<()> {
@@ -448,11 +449,11 @@ impl AppUi {
     }
 
     pub fn redraw(&mut self) -> Result<()> {
-        self.sync_display_model_live_state();
         let size = self.frame_backend.refresh_size()?;
+        self.current_pane = Rect::new(0, 0, size.width, size.height);
+        self.sync_display_model_live_state();
         let frame = self.display_renderer.render(&self.display_model, size);
         self.frame_backend.draw_frame(frame)?;
-        self.current_pane = Rect::new(0, 0, size.width, size.height);
         self.dirty = false;
         Ok(())
     }
@@ -760,21 +761,6 @@ impl AppUi {
         self.dirty = true;
         Ok(())
     }
-}
-
-fn reserve_startup_rows(stdout: &mut Stdout, height: u16) -> Result<u16> {
-    let (_, origin_y) = cursor::position().unwrap_or((0, 0));
-    let min_rows = height.min(4);
-    let max_origin_y = height.saturating_sub(min_rows);
-    if origin_y <= max_origin_y {
-        return Ok(origin_y);
-    }
-
-    for _ in 0..origin_y.saturating_sub(max_origin_y) {
-        write!(stdout, "\r\n")?;
-    }
-    stdout.flush()?;
-    Ok(max_origin_y)
 }
 
 impl Drop for AppUi {

@@ -171,6 +171,11 @@ pub(super) fn classify_history_search_key(key: KeyEvent) -> HistorySearchKey {
             code: KeyCode::Esc, ..
         } => HistorySearchKey::Close,
         KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers,
+            ..
+        } if modifiers.contains(KeyModifiers::CONTROL) => HistorySearchKey::Close,
+        KeyEvent {
             code: KeyCode::Up, ..
         } => HistorySearchKey::Up,
         KeyEvent {
@@ -292,6 +297,10 @@ mod tests {
         assert_eq!(
             classify_history_search_key(key(KeyCode::Char('r'), KeyModifiers::CONTROL)),
             HistorySearchKey::Cycle
+        );
+        assert_eq!(
+            classify_history_search_key(key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            HistorySearchKey::Close
         );
     }
 
