@@ -24,7 +24,7 @@ use line_wrapper::LineWrapper;
 use ratatui_core::{
     buffer::Buffer,
     layout::{Constraint, Layout, Position, Rect},
-    style::Style,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Widget,
 };
@@ -287,6 +287,9 @@ impl<'a, 'b> EditorView<'a, 'b> {
             search_selection = (&self.state.search).into();
         };
         let selections = vec![&self.state.selection, &search_selection];
+        let pair_highlights = bracket_pair_highlights(lines, cursor);
+        let mut highlights = self.state.highlights.clone();
+        highlights.extend(pair_highlights);
 
         let mut cursor_position: Option<Position> = None;
         let mut rows = Vec::new();
@@ -307,7 +310,7 @@ impl<'a, 'b> EditorView<'a, 'b> {
             let spans = generate_spans(
                 line,
                 &selections,
-                &self.state.highlights,
+                &highlights,
                 row_index,
                 col_skips,
                 &self.theme.base,
@@ -498,6 +501,94 @@ fn generate_spans<'a>(
     )
 }
 
+fn bracket_pair_highlights(lines: &jagged::Jagged<char>, cursor: Index2) -> Vec<Highlight> {
+    let style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+
+    let candidates = [
+        Some(cursor),
+        cursor
+            .col
+            .checked_sub(1)
+            .map(|col| Index2::new(cursor.row, col)),
+    ];
+
+    for position in candidates.into_iter().flatten() {
+        let Some(ch) = char_at(lines, position) else {
+            continue;
+        };
+        let Some(matching) = find_matching_bracket(lines, position, ch) else {
+            continue;
+        };
+        return vec![
+            Highlight::new(position, position, style),
+            Highlight::new(matching, matching, style),
+        ];
+    }
+
+    Vec::new()
+}
+
+fn char_at(lines: &jagged::Jagged<char>, position: Index2) -> Option<char> {
+    lines
+        .iter_row()
+        .nth(position.row)
+        .and_then(|line| line.get(position.col))
+        .copied()
+}
+
+fn find_matching_bracket(lines: &jagged::Jagged<char>, position: Index2, ch: char) -> Option<Index2> {
+    let (open, close, forward) = match ch {
+        '(' => ('(', ')', true),
+        '[' => ('[', ']', true),
+        '{' => ('{', '}', true),
+        ')' => ('(', ')', false),
+        ']' => ('[', ']', false),
+        '}' => ('{', '}', false),
+        _ => return None,
+    };
+
+    let mut positions: Vec<(Index2, char)> = lines
+        .iter_row()
+        .enumerate()
+        .flat_map(|(row, line)| {
+            line.iter()
+                .copied()
+                .enumerate()
+                .map(move |(col, ch)| (Index2::new(row, col), ch))
+        })
+        .collect();
+
+    if !forward {
+        positions.reverse();
+    }
+
+    let start = positions.iter().position(|(pos, _)| *pos == position)?;
+    let mut depth = 0usize;
+    for (pos, current) in positions.into_iter().skip(start + 1) {
+        if forward {
+            if current == open {
+                depth += 1;
+            } else if current == close {
+                if depth == 0 {
+                    return Some(pos);
+                }
+                depth -= 1;
+            }
+        } else if current == close {
+            depth += 1;
+        } else if current == open {
+            if depth == 0 {
+                return Some(pos);
+            }
+            depth -= 1;
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +618,19 @@ mod tests {
         assert_eq!(plan.cursor.map(|cursor| cursor.position), Some(Position::new(2, 1)));
         assert_eq!(plan.viewport_offset, (0, 0));
         assert_eq!(plan.screen_area, Rect::new(0, 0, 20, 4));
+    }
+
+    #[test]
+    fn bracket_pair_highlights_match_adjacent_pairs() {
+        let mut state = EditorState::new(Lines::from("foo(bar)\n[x]"));
+        state.cursor = Index2::new(0, 3);
+
+        let plan = EditorView::new(&mut state)
+            .theme(EditorTheme::default().hide_status_line())
+            .render_plan(Rect::new(0, 0, 20, 2));
+
+        assert_eq!(plan.rows[0].spans[1].content.as_ref(), "(");
+        assert_eq!(plan.rows[0].spans[3].content.as_ref(), ")");
     }
 
     #[test]
