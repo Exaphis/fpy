@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod connection;
 mod extensions;
+mod frontend_magic;
 mod history;
 mod jupyter;
 mod kernel;

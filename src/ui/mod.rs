@@ -145,6 +145,10 @@ impl AppUi {
         self.history_entries.len().saturating_sub(1)
     }
 
+    pub fn discard_editor_history_submission(&mut self, code: &str) {
+        self.editor.pop_history_if_last(code);
+    }
+
     pub fn record_history_completion(
         &mut self,
         history_index: usize,

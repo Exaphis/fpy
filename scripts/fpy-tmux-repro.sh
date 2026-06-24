@@ -726,6 +726,12 @@ case "$ACTION" in
     tmux send-keys -t "$SESSION" "quit()" Enter
     wait_for_text "$SESSION" "Kernel exited unexpectedly" "kernel-quit"
     ;;
+  fpy-out-prev)
+    wait_for_submit_ready "$SESSION"
+    tmux send-keys -t "$SESSION" -l "%fpy_out -1"
+    tmux send-keys -t "$SESSION" Enter
+    sleep 0.2
+    ;;
   none)
     wait_for_submit_ready "$SESSION"
     ;;

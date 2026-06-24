@@ -172,6 +172,13 @@ impl EditorController {
         self.history_index = None;
     }
 
+    pub(super) fn pop_history_if_last(&mut self, text: &str) {
+        if self.history.last().is_some_and(|entry| entry == text) {
+            self.history.pop();
+            self.history_index = None;
+        }
+    }
+
     pub(super) fn select_history(&mut self, index: usize) {
         if let Some(text) = self.history.get(index).cloned() {
             self.history_index = Some(index);

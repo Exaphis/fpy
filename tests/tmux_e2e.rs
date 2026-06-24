@@ -136,6 +136,36 @@ fn frame_backend_basic_transcript_smoke() {
 }
 
 #[test]
+fn fpy_out_replays_previous_stdout_stream_without_kernel_execution() {
+    let Some(output) = run_repro(
+        "fpy-out-prev",
+        "fpy-out-prev",
+        &[("INPUTS", "print('fpy-out-sentinel')")],
+    ) else {
+        return;
+    };
+
+    assert_line_count(&output.after, "fpy-out-sentinel", 3);
+    assert_not_contains(&output.after, "In [2]: %fpy_out -1");
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+}
+
+#[test]
+fn fpy_out_replays_previous_execute_result_without_kernel_execution() {
+    let Some(output) = run_repro(
+        "fpy-out-result-prev",
+        "fpy-out-prev",
+        &[("INPUTS", "987654321")],
+    ) else {
+        return;
+    };
+
+    assert_line_count(&output.after, "987654321", 3);
+    assert_not_contains(&output.after, "In [2]: %fpy_out -1");
+    assert_last_prompt_line_contains_all(&output.after, &["INS", "In [2]", "Ctrl-P palette"]);
+}
+
+#[test]
 fn frame_backend_exit_returns_shell_prompt_without_blank_gap() {
     let Some(output) = run_repro(
         "frame-backend-exit-shell-adjacent",

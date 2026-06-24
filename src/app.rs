@@ -13,6 +13,10 @@ use tokio::{
 use crate::{
     cli::{Cli, Command},
     connection::ConnectionFile,
+    frontend_magic::{
+        FrontendMagic, FrontendMagicParse, OutputCaptureStore, copy_to_clipboard,
+        parse_frontend_magic, resolve_error_message,
+    },
     history::{self, HistoryOutcome, HistorySession},
     kernel::{KernelEvent, KernelSession, KernelStatus, LaunchConfig},
     ui::{AppUi, UiAction},
@@ -102,6 +106,7 @@ struct ActiveSession {
     execution_timer: ExecutionTimer,
     history: Option<HistorySession>,
     pending_history: Option<PendingHistoryEntry>,
+    captures: OutputCaptureStore,
 }
 
 struct PendingHistoryEntry {
@@ -180,6 +185,7 @@ async fn run_active_iteration(
                     &mut session.execution_timer,
                     &mut session.history,
                     &mut session.pending_history,
+                    &mut session.captures,
                     event,
                 )
             }
@@ -189,6 +195,7 @@ async fn run_active_iteration(
                     &mut session.kernel,
                     &mut session.execution_timer,
                     &mut session.pending_history,
+                    &mut session.captures,
                 )
             }
             _ = ui_tick.tick() => {
@@ -202,6 +209,7 @@ async fn run_active_iteration(
                     &mut session.execution_timer,
                     &mut session.history,
                     &mut session.pending_history,
+                    &mut session.captures,
                     input,
                 ).await
             }
@@ -214,6 +222,7 @@ async fn run_active_iteration(
                     &mut session.execution_timer,
                     &mut session.history,
                     &mut session.pending_history,
+                    &mut session.captures,
                     event,
                 )
             }
@@ -223,6 +232,7 @@ async fn run_active_iteration(
                     &mut session.kernel,
                     &mut session.execution_timer,
                     &mut session.pending_history,
+                    &mut session.captures,
                 )
             }
             input = ui.next_action() => {
@@ -232,6 +242,7 @@ async fn run_active_iteration(
                     &mut session.execution_timer,
                     &mut session.history,
                     &mut session.pending_history,
+                    &mut session.captures,
                     input,
                 ).await
             }
@@ -297,6 +308,7 @@ fn activate_bootstrap_result(
         execution_timer: ExecutionTimer::default(),
         history,
         pending_history: None,
+        captures: OutputCaptureStore::default(),
     })))
 }
 
@@ -305,11 +317,20 @@ fn handle_kernel_event_stream(
     execution_timer: &mut ExecutionTimer,
     history: &mut Option<HistorySession>,
     pending_history: &mut Option<PendingHistoryEntry>,
+    captures: &mut OutputCaptureStore,
     event: Option<KernelEvent>,
 ) -> Result<bool> {
     match event {
-        Some(event) => handle_kernel_event(ui, execution_timer, history, pending_history, event),
+        Some(event) => handle_kernel_event(
+            ui,
+            execution_timer,
+            history,
+            pending_history,
+            captures,
+            event,
+        ),
         None => {
+            captures.finish_active();
             execution_timer.clear();
             pending_history.take();
             ui.set_status(KernelStatus::Disconnected);
@@ -325,8 +346,10 @@ fn handle_local_kernel_liveness(
     kernel: &mut KernelSession,
     execution_timer: &mut ExecutionTimer,
     pending_history: &mut Option<PendingHistoryEntry>,
+    captures: &mut OutputCaptureStore,
 ) -> Result<bool> {
     if let Some(message) = kernel.poll_local_exit()? {
+        captures.finish_active();
         execution_timer.clear();
         pending_history.take();
         ui.set_status(KernelStatus::Disconnected);
@@ -344,6 +367,7 @@ async fn handle_ready_input(
     execution_timer: &mut ExecutionTimer,
     history: &mut Option<HistorySession>,
     pending_history: &mut Option<PendingHistoryEntry>,
+    captures: &mut OutputCaptureStore,
     input: Result<Option<UiAction>>,
 ) -> Result<bool> {
     if let Some(action) = input? {
@@ -353,6 +377,7 @@ async fn handle_ready_input(
             execution_timer,
             history,
             pending_history,
+            captures,
             action,
         )
         .await
@@ -379,6 +404,7 @@ fn handle_kernel_event(
     execution_timer: &mut ExecutionTimer,
     history: &mut Option<HistorySession>,
     pending_history: &mut Option<PendingHistoryEntry>,
+    captures: &mut OutputCaptureStore,
     event: KernelEvent,
 ) -> Result<bool> {
     match event {
@@ -389,6 +415,7 @@ fn handle_kernel_event(
             ui.set_status(status);
             match status {
                 KernelStatus::Idle => {
+                    captures.finish_active();
                     if let Some(duration) = execution_timer.finish() {
                         if let Some(entry) = pending_history.take() {
                             persist_history_done(ui, history, &entry, duration)?;
@@ -402,6 +429,7 @@ fn handle_kernel_event(
                     }
                 }
                 KernelStatus::Disconnected => {
+                    captures.finish_active();
                     execution_timer.clear();
                     pending_history.take();
                     ui.insert_transcript("Kernel exited unexpectedly")?;
@@ -415,6 +443,7 @@ fn handle_kernel_event(
             execution_count,
             code,
         } => {
+            captures.begin_cell(execution_count, &code);
             execution_timer.start();
             ui.set_last_execution_count(execution_count);
             ui.insert_execute_input(execution_count, &code)?;
@@ -423,6 +452,7 @@ fn handle_kernel_event(
             execution_count,
             text,
         } => {
+            captures.append_execute_result(execution_count, &text);
             ui.set_last_execution_count(execution_count);
             ui.insert_execute_result(execution_count, &text)?;
         }
@@ -430,6 +460,7 @@ fn handle_kernel_event(
             ui.insert_transcript(text)?;
         }
         KernelEvent::Stream { name, text } => {
+            captures.append_stream(name, &text);
             ui.insert_stream(name, &text)?;
         }
         KernelEvent::Error { traceback } => {
@@ -457,6 +488,7 @@ fn handle_kernel_event(
             ui.insert_transcript(format!("warning: {text}"))?;
         }
         KernelEvent::Fatal(text) => {
+            captures.finish_active();
             execution_timer.clear();
             pending_history.take();
             ui.set_status(KernelStatus::Disconnected);
@@ -496,10 +528,25 @@ async fn handle_ready_ui_action(
     execution_timer: &mut ExecutionTimer,
     history: &mut Option<HistorySession>,
     pending_history: &mut Option<PendingHistoryEntry>,
+    captures: &mut OutputCaptureStore,
     action: UiAction,
 ) -> Result<bool> {
     match action {
         UiAction::Submit(code) => {
+            match parse_frontend_magic(&code) {
+                FrontendMagicParse::Magic(magic) => {
+                    ui.discard_editor_history_submission(&code);
+                    handle_frontend_magic(ui, captures, magic)?;
+                    return Ok(false);
+                }
+                FrontendMagicParse::Error(message) => {
+                    ui.discard_editor_history_submission(&code);
+                    ui.insert_transcript(format!("fpy: {message}"))?;
+                    return Ok(false);
+                }
+                FrontendMagicParse::NotFrontendMagic => {}
+            }
+
             let ui_history_index = ui.record_history_submission(&code);
             let mut entry_seq = None;
             if let Some(history_session) = history.as_mut() {
@@ -548,6 +595,7 @@ async fn handle_ready_ui_action(
             execution_timer.clear();
             match kernel.restart().await {
                 Ok(()) => {
+                    captures.finish_active();
                     pending_history.take();
                     ui.set_connection_summary(kernel.connection_summary());
                     ui.reset_last_execution_count();
@@ -562,6 +610,29 @@ async fn handle_ready_ui_action(
             ui.insert_transcript(ui.connection_summary().to_string())?;
             Ok(false)
         }
+    }
+}
+
+fn handle_frontend_magic(
+    ui: &mut AppUi,
+    captures: &OutputCaptureStore,
+    magic: FrontendMagic,
+) -> Result<()> {
+    match magic {
+        FrontendMagic::PrintOutput { target } => match captures.resolve_output(target) {
+            Ok(resolved) => ui.insert_transcript(resolved.output),
+            Err(error) => ui.insert_transcript(resolve_error_message(error)),
+        },
+        FrontendMagic::ClipOutput { target } => match captures.resolve_output(target) {
+            Ok(resolved) => match copy_to_clipboard(resolved.output) {
+                Ok(()) => ui.insert_transcript(format!(
+                    "fpy: copied output from In [{}] to clipboard",
+                    resolved.execution_count
+                )),
+                Err(error) => ui.insert_transcript(format!("fpy: {error}")),
+            },
+            Err(error) => ui.insert_transcript(resolve_error_message(error)),
+        },
     }
 }
 
