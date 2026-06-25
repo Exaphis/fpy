@@ -4,12 +4,9 @@ use jagged::{index::RowIndex, Index2};
 
 use crate::{
     clipboard::ClipboardTrait,
-    helper::{append_str, insert_str, max_row},
-    EditorState,
+    helper::{append_str, insert_char, insert_str, max_row},
+    EditorMode, EditorState,
 };
-
-#[cfg(test)]
-use crate::EditorMode;
 
 use super::{delete::delete_selection, Execute};
 
@@ -29,7 +26,16 @@ impl Execute for Paste {
         // In single-line mode, replace newlines with spaces
         if state.view.single_line {
             let s = s.replace('\n', " ").replace('\r', "");
-            append_str(&mut state.lines, &mut state.cursor, &s);
+            if state.mode == EditorMode::Insert {
+                paste_at_cursor(state, &s);
+            } else {
+                append_str(&mut state.lines, &mut state.cursor, &s);
+            }
+            return;
+        }
+
+        if state.mode == EditorMode::Insert {
+            paste_at_cursor(state, &s);
             return;
         }
 
@@ -45,6 +51,12 @@ impl Execute for Paste {
         };
 
         append_str(&mut state.lines, &mut state.cursor, s);
+    }
+}
+
+fn paste_at_cursor(state: &mut EditorState, text: &str) {
+    for ch in text.chars() {
+        insert_char(&mut state.lines, &mut state.cursor, ch, false);
     }
 }
 
@@ -105,6 +117,48 @@ mod tests {
 
         assert_eq!(state.cursor, Index2::new(0, 3));
         assert_eq!(state.lines, Lines::from("HHelello World!\n\n123."));
+    }
+
+    #[test]
+    fn test_insert_mode_paste_inserts_at_cursor() {
+        let mut state = test_state();
+        state.mode = EditorMode::Insert;
+        state.cursor = Index2::new(0, 5);
+        state.clip.set_text(", brave".to_string());
+
+        Paste.execute(&mut state);
+
+        assert_eq!(state.cursor, Index2::new(0, 12));
+        assert_eq!(state.lines, Lines::from("Hello, brave World!\n\n123."));
+    }
+
+    #[test]
+    fn test_insert_mode_single_line_paste_inserts_at_cursor() {
+        let mut state = EditorState::new(Lines::from("Hello World"));
+        state.set_clipboard(InternalClipboard::default());
+        state.set_single_line(true);
+        state.mode = EditorMode::Insert;
+        state.cursor = Index2::new(0, 5);
+        state.clip.set_text(",\nbrave".to_string());
+
+        Paste.execute(&mut state);
+
+        assert_eq!(state.cursor, Index2::new(0, 12));
+        assert_eq!(state.lines, Lines::from("Hello, brave World"));
+    }
+
+    #[test]
+    fn test_insert_mode_paste_leading_newline_splits_at_cursor() {
+        let mut state = EditorState::new(Lines::from("foo baz"));
+        state.set_clipboard(InternalClipboard::default());
+        state.mode = EditorMode::Insert;
+        state.cursor = Index2::new(0, 3);
+        state.clip.set_text("\nbar".to_string());
+
+        Paste.execute(&mut state);
+
+        assert_eq!(state.cursor, Index2::new(1, 3));
+        assert_eq!(state.lines, Lines::from("foo\nbar baz"));
     }
 
     #[test]

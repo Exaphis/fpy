@@ -798,13 +798,13 @@ mod tests {
         state.cursor = Index2::new(0, 6);
 
         MoveDown(1).execute(&mut state);
-        assert_eq!(state.cursor, Index2::new(1, 6));
+        assert_eq!(state.cursor, Index2::new(1, 0));
 
         MoveDown(1).execute(&mut state);
-        assert_eq!(state.cursor, Index2::new(2, 6));
+        assert_eq!(state.cursor, Index2::new(2, 3));
 
         MoveDown(1).execute(&mut state);
-        assert_eq!(state.cursor, Index2::new(2, 6));
+        assert_eq!(state.cursor, Index2::new(2, 3));
     }
 
     #[test]
@@ -813,7 +813,7 @@ mod tests {
         state.cursor = Index2::new(2, 2);
 
         MoveUp(1).execute(&mut state);
-        assert_eq!(state.cursor, Index2::new(1, 2));
+        assert_eq!(state.cursor, Index2::new(1, 0));
 
         MoveUp(1).execute(&mut state);
         assert_eq!(state.cursor, Index2::new(0, 2));
@@ -1018,10 +1018,10 @@ mod tests {
         assert_eq!(state.cursor, Index2::new(0, 11));
 
         MoveWordForwardToEndOfWord(1).execute(&mut state);
-        assert_eq!(state.cursor, Index2::new(2, 2));
+        assert_eq!(state.cursor, Index2::new(1, 0));
 
         MoveWordForwardToEndOfWord(1).execute(&mut state);
-        assert_eq!(state.cursor, Index2::new(2, 3));
+        assert_eq!(state.cursor, Index2::new(2, 2));
 
         MoveWordForwardToEndOfWord(1).execute(&mut state);
         assert_eq!(state.cursor, Index2::new(2, 3));

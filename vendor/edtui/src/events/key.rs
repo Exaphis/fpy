@@ -1457,6 +1457,126 @@ mod tests {
     }
 
     #[test]
+    fn vim_visual_char_search_motions_extend_selection() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo,bar,baz"));
+
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('v'), KeyInput::new('t'), KeyInput::new(',')],
+        );
+        assert_eq!(state.mode, EditorMode::Visual);
+        assert_eq!(state.cursor, crate::Index2::new(0, 2));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 0),
+                crate::Index2::new(0, 2)
+            ))
+        );
+
+        state = EditorState::new(crate::Lines::from("foo,bar,baz"));
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('v'), KeyInput::new('f'), KeyInput::new(',')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 3));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 0),
+                crate::Index2::new(0, 3)
+            ))
+        );
+
+        state = EditorState::new(crate::Lines::from("foo,bar,baz"));
+        state.cursor.col = 10;
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('v'), KeyInput::shift('T'), KeyInput::new(',')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 8));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 10),
+                crate::Index2::new(0, 8)
+            ))
+        );
+
+        state = EditorState::new(crate::Lines::from("foo,bar,baz"));
+        state.cursor.col = 10;
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('v'), KeyInput::shift('F'), KeyInput::new(',')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 7));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 10),
+                crate::Index2::new(0, 7)
+            ))
+        );
+    }
+
+    #[test]
+    fn vim_visual_char_search_counts_and_missing_targets_work() {
+        let mut handler = KeyEventHandler::vim_mode();
+        let mut state = EditorState::new(crate::Lines::from("foo,bar,baz"));
+        state.set_clipboard(InternalClipboard::default());
+
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('v'),
+                KeyInput::new('2'),
+                KeyInput::new('f'),
+                KeyInput::new(','),
+            ],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 7));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 0),
+                crate::Index2::new(0, 7)
+            ))
+        );
+
+        state = EditorState::new(crate::Lines::from("abc"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('v'), KeyInput::new('t'), KeyInput::new('x')],
+        );
+        assert_eq!(state.mode, EditorMode::Visual);
+        assert_eq!(state.lines.to_string(), "abc");
+        assert_eq!(state.cursor, crate::Index2::new(0, 0));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 0),
+                crate::Index2::new(0, 0)
+            ))
+        );
+
+        press(&mut handler, &mut state, &[KeyInput::new('l')]);
+        assert_eq!(state.cursor, crate::Index2::new(0, 1));
+        assert_eq!(state.lines.to_string(), "abc");
+    }
+
+    #[test]
     fn vim_operator_char_search_motions_work() {
         let mut handler = KeyEventHandler::vim_mode();
         let mut state = EditorState::new(crate::Lines::from("foo(bar) baz"));

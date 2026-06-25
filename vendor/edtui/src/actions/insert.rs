@@ -451,7 +451,7 @@ mod tests {
         state.cursor = Index2::new(1, 5);
         LineBreak(1).execute(&mut state);
         assert_eq!(state.cursor, Index2::new(2, 0));
-        assert_eq!(state.lines, Lines::from("\nHello\n World!\n\n123."));
+        assert_eq!(state.lines, Lines::from("\nHello\nWorld!\n\n123."));
     }
 
     #[test]

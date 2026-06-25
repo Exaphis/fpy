@@ -120,6 +120,7 @@ impl VimCommandContext<'_> {
         editor: &mut EditorState,
     ) -> bool {
         self.handle_visual_text_object_key(key_input, editor)
+            || self.handle_visual_char_motion_key(key_input, editor)
             || handle_visual_operator_key(key_input, editor)
     }
 
@@ -205,6 +206,24 @@ impl VimCommandContext<'_> {
             (Char('l'), input::Modifiers::NONE) => MotionKind::Right,
             _ => return false,
         };
+        if motion == MotionKind::LineEnd && self.state.command_count() > 1 {
+            let target_row = editor
+                .cursor
+                .row
+                .saturating_add(self.state.command_count().saturating_sub(1))
+                .min(editor.lines.len().saturating_sub(1));
+            editor.cursor.row = target_row;
+            editor.cursor.col = editor
+                .lines
+                .len_col(target_row)
+                .unwrap_or_default()
+                .saturating_sub(1);
+            editor.preferred_col = Some(usize::MAX);
+            self.lookup.clear();
+            self.state.clear();
+            return true;
+        }
+
         if let Some((destination, preferred_col)) =
             vim_motion::motion_effect(editor, motion, self.state.command_count())
         {
@@ -364,6 +383,52 @@ impl VimCommandContext<'_> {
         self.lookup.clear();
         self.state.clear();
         false
+    }
+
+    fn handle_visual_char_motion_key(
+        &mut self,
+        key_input: KeyInput,
+        editor: &mut EditorState,
+    ) -> bool {
+        use input::KeyCode::Char;
+
+        if self.lookup.is_empty() {
+            if matches!(key_input.key, Char('f' | 't' | 'F' | 'T'))
+                && matches!(
+                    key_input.modifiers,
+                    input::Modifiers::NONE | input::Modifiers::SHIFT
+                )
+            {
+                self.lookup.push(key_input);
+                return true;
+            }
+            return false;
+        }
+
+        let Char(motion @ ('f' | 't' | 'F' | 'T')) = self.lookup[0].key else {
+            return false;
+        };
+        let Char(target) = key_input.key else {
+            self.lookup.clear();
+            self.state.clear();
+            return false;
+        };
+
+        let count = self.take_command_count();
+        if let Some(motion_kind) = char_motion_kind(motion) {
+            if let Some(range) = vim_motion::char_motion_range(editor, motion_kind, target, count) {
+                editor.preferred_col = None;
+                editor.cursor = if matches!(motion, 'F' | 'T') {
+                    range.start
+                } else {
+                    range.end
+                };
+                set_selection_with_lines(&mut editor.selection, editor.cursor, &editor.lines);
+            }
+        }
+        self.lookup.clear();
+        self.state.clear();
+        true
     }
 
     fn handle_operator_key(&mut self, key_input: KeyInput, editor: &mut EditorState) -> bool {
