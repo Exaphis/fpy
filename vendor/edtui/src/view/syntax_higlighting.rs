@@ -195,28 +195,42 @@ impl SyntaxHighlighter {
         Ok(self)
     }
 
-    pub(super) fn highlight_line(&self, line: &str, base_style: &Style) -> Vec<InternalSpan> {
-        // Highlight lines
+    pub(super) fn highlight_lines<I>(&self, lines: I, base_style: &Style) -> Vec<Vec<InternalSpan>>
+    where
+        I: IntoIterator<Item = String>,
+    {
         let mut highlight_lines = HighlightLines::new(&self.syntax_ref, &self.theme);
-        let mut spans = Vec::new();
 
-        if let Ok(highlighted_line) = highlight_lines.highlight_line(line, &self.syntax_set) {
-            // Convert the highlighted lines into spans
-            for &(style, text) in &highlighted_line {
-                spans.push(InternalSpan::new(
-                    text.to_string(),
-                    &Style::default().fg(Color::Rgb(
-                        style.foreground.r,
-                        style.foreground.g,
-                        style.foreground.b,
-                    )),
-                ));
-            }
-        } else {
-            spans.push(InternalSpan::new(line.to_string(), base_style));
-        }
+        lines
+            .into_iter()
+            .map(|line| {
+                let line_with_ending = format!("{line}\n");
+                if let Ok(highlighted_line) =
+                    highlight_lines.highlight_line(&line_with_ending, &self.syntax_set)
+                {
+                    highlighted_line
+                        .iter()
+                        .filter_map(|(style, text)| {
+                            let text = text.trim_end_matches('\n');
+                            if text.is_empty() {
+                                return None;
+                            }
 
-        spans
+                            Some(InternalSpan::new(
+                                text.to_string(),
+                                &Style::default().fg(Color::Rgb(
+                                    style.foreground.r,
+                                    style.foreground.g,
+                                    style.foreground.b,
+                                )),
+                            ))
+                        })
+                        .collect()
+                } else {
+                    vec![InternalSpan::new(line, base_style)]
+                }
+            })
+            .collect()
     }
 }
 

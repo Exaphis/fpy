@@ -1,8 +1,6 @@
 //! A collection of internal datatypes for rendering.
 //!
 //! TODO: Refactor.
-#[cfg(feature = "syntax-highlighting")]
-use crate::SyntaxHighlighter;
 use crate::{
     helper::{char_width, span_width, split_str_at},
     state::highlight::Highlight,
@@ -247,18 +245,15 @@ fn is_empty_line_selection_visible(
 
 #[allow(clippy::too_many_arguments)]
 #[cfg(feature = "syntax-highlighting")]
-pub(crate) fn line_into_highlighted_spans_with_selections<'a>(
-    line: &[char],
+pub(crate) fn highlighted_spans_with_selections<'a>(
+    syntax_spans: &[InternalSpan],
     selections: &[&Option<Selection>],
     highlights: &[Highlight],
-    syntax_highligher: &SyntaxHighlighter,
     row_index: usize,
     col_skips: usize,
-    base_style: &Style,
     selection_style: &Style,
 ) -> Vec<Span<'a>> {
-    let line: String = line.iter().collect();
-    let mut internal_spans = syntax_highligher.highlight_line(&line, base_style);
+    let mut internal_spans = syntax_spans.to_vec();
 
     // Apply custom highlights first
     for highlight in highlights.iter().filter(|h| h.contains_row(row_index)) {

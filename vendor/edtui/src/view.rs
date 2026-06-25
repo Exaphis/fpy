@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[cfg(feature = "syntax-highlighting")]
-use internal::line_into_highlighted_spans_with_selections;
+use internal::highlighted_spans_with_selections;
 use internal::line_into_spans_with_selections;
 use jagged::index::RowIndex;
 use line_wrapper::LineWrapper;
@@ -291,6 +291,14 @@ impl<'a, 'b> EditorView<'a, 'b> {
         let mut highlights = self.state.highlights.clone();
         highlights.extend(pair_highlights);
 
+        #[cfg(feature = "syntax-highlighting")]
+        let syntax_spans = self.syntax_highlighter.as_ref().map(|syntax| {
+            syntax.highlight_lines(
+                lines.iter_row().map(|line| line.iter().collect::<String>()),
+                &self.theme.base,
+            )
+        });
+
         let mut cursor_position: Option<Position> = None;
         let mut rows = Vec::new();
         let mut num_rendered_rows = 0;
@@ -316,7 +324,10 @@ impl<'a, 'b> EditorView<'a, 'b> {
                 &self.theme.base,
                 &self.theme.selection_style,
                 #[cfg(feature = "syntax-highlighting")]
-                self.syntax_highlighter.as_ref(),
+                syntax_spans
+                    .as_ref()
+                    .and_then(|spans_by_row| spans_by_row.get(row_index))
+                    .map(Vec::as_slice),
             );
 
             let render_line = if wrap_lines {
@@ -472,18 +483,16 @@ fn generate_spans<'a>(
     col_skips: usize,
     base_style: &Style,
     selection_style: &Style,
-    #[cfg(feature = "syntax-highlighting")] syntax_highlighter: Option<&SyntaxHighlighter>,
+    #[cfg(feature = "syntax-highlighting")] syntax_spans: Option<&[internal::InternalSpan]>,
 ) -> Vec<Span<'a>> {
     #[cfg(feature = "syntax-highlighting")]
-    if let Some(syntax) = syntax_highlighter {
-        return line_into_highlighted_spans_with_selections(
-            line,
+    if let Some(syntax_spans) = syntax_spans {
+        return highlighted_spans_with_selections(
+            syntax_spans,
             selections,
             highlights,
-            syntax,
             row_index,
             col_skips,
-            base_style,
             selection_style,
         );
     }

@@ -515,6 +515,56 @@ mod tests {
     }
 
     #[test]
+    fn editor_syntax_highlighting_preserves_multiline_parser_state() {
+        let code = "x = \"\"\"\n[]\n\"\"\"";
+        let editor = EditorModel {
+            text: code.to_string(),
+            prompt: "In [1]: ".to_string(),
+            ..EditorModel::default()
+        };
+
+        let editor_rows = EditorComponent::new(&editor).render(80);
+        let transcript = highlighted_execute_input(Some(1), code);
+
+        let editor_color = rgb_sequences(&editor_rows[1].text)
+            .into_iter()
+            .last()
+            .expect("editor should color the middle line");
+        let transcript_color = last_rgb_sequence_on_line_containing(&transcript, "[]")
+            .expect("transcript should color the middle line");
+
+        assert_eq!(
+            editor_color, transcript_color,
+            "editor should keep the same multiline string color as the transcript"
+        );
+    }
+
+    #[test]
+    fn editor_syntax_highlighting_resets_line_comments() {
+        let code = "# comment\nx = 1";
+        let editor = EditorModel {
+            text: code.to_string(),
+            prompt: "In [1]: ".to_string(),
+            ..EditorModel::default()
+        };
+
+        let editor_rows = EditorComponent::new(&editor).render(80);
+        let transcript = highlighted_execute_input(Some(1), code);
+
+        let editor_color = rgb_sequences(&editor_rows[1].text)
+            .into_iter()
+            .last()
+            .expect("editor should color the second line");
+        let transcript_color = last_rgb_sequence_on_line_containing(&transcript, "x = 1")
+            .expect("transcript should color the second line");
+
+        assert_eq!(
+            editor_color, transcript_color,
+            "editor should reset line comments before highlighting the next line"
+        );
+    }
+
+    #[test]
     fn editor_component_cursor_position_ignores_prompt_and_syntax_ansi() {
         let editor = EditorModel {
             text: "time.sleep(1)".to_string(),
@@ -573,6 +623,12 @@ mod tests {
             rest = &rest[end + 1..];
         }
         colors
+    }
+
+    fn last_rgb_sequence_on_line_containing(text: &str, needle: &str) -> Option<String> {
+        text.lines()
+            .find(|line| strip_ansi(line).contains(needle))
+            .and_then(|line| rgb_sequences(line).into_iter().last())
     }
 
     #[test]
