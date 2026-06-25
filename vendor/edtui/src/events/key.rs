@@ -1475,6 +1475,12 @@ mod tests {
                 crate::Index2::new(0, 2)
             ))
         );
+        let area = ratatui_core::layout::Rect::new(0, 0, 20, 2);
+        let plan = crate::EditorView::new(&mut state).render_plan(area);
+        assert_eq!(
+            plan.cursor.map(|cursor| cursor.position),
+            Some(ratatui_core::layout::Position::new(2, 0))
+        );
 
         state = EditorState::new(crate::Lines::from("foo,bar,baz"));
         handler = KeyEventHandler::vim_mode();
@@ -1549,6 +1555,22 @@ mod tests {
             Some(crate::state::selection::Selection::new(
                 crate::Index2::new(0, 0),
                 crate::Index2::new(0, 7)
+            ))
+        );
+
+        state = EditorState::new(crate::Lines::from("1234"));
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('v'), KeyInput::new('t'), KeyInput::new('4')],
+        );
+        assert_eq!(state.cursor, crate::Index2::new(0, 2));
+        assert_eq!(
+            state.selection,
+            Some(crate::state::selection::Selection::new(
+                crate::Index2::new(0, 0),
+                crate::Index2::new(0, 2)
             ))
         );
 
@@ -1630,6 +1652,44 @@ mod tests {
         );
         assert_eq!(state.lines.to_string(), "foo(baz");
         assert_eq!(state.mode, EditorMode::Insert);
+
+        state = EditorState::new(crate::Lines::from("1234"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('d'), KeyInput::new('f'), KeyInput::new('4')],
+        );
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.clip.get_text(), "1234");
+
+        state = EditorState::new(crate::Lines::from("1234"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[KeyInput::new('y'), KeyInput::new('f'), KeyInput::new('4')],
+        );
+        assert_eq!(state.lines.to_string(), "1234");
+        assert_eq!(state.clip.get_text(), "1234");
+
+        state = EditorState::new(crate::Lines::from("1,4,3,4"));
+        state.set_clipboard(InternalClipboard::default());
+        handler = KeyEventHandler::vim_mode();
+        press(
+            &mut handler,
+            &mut state,
+            &[
+                KeyInput::new('d'),
+                KeyInput::new('2'),
+                KeyInput::new('f'),
+                KeyInput::new('4'),
+            ],
+        );
+        assert_eq!(state.lines.to_string(), "");
+        assert_eq!(state.clip.get_text(), "1,4,3,4");
     }
 
     #[test]

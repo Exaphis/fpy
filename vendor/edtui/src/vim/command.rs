@@ -26,6 +26,13 @@ impl VimCommandContext<'_> {
         key_input: KeyInput,
         editor: &mut EditorState,
     ) -> bool {
+        if self
+            .lookup
+            .iter()
+            .any(|input| matches!(input.key, input::KeyCode::Char('f' | 't' | 'F' | 'T')))
+        {
+            return false;
+        }
         match key_input.key {
             input::KeyCode::Char(digit)
                 if digit.is_ascii_digit()
