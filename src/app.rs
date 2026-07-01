@@ -565,8 +565,9 @@ async fn handle_ready_ui_action(
                 ui_history_index,
                 outcome: HistoryOutcome::Ok,
             });
+            ui.show_submitted_code(&code)?;
+            ui.redraw()?;
             kernel.execute(code)?;
-            ui.set_status(KernelStatus::Busy);
             Ok(false)
         }
         UiAction::ReplyInput { value } => {

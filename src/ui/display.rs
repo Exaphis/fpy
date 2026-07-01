@@ -59,6 +59,22 @@ impl TranscriptModel {
         }));
     }
 
+    pub(crate) fn update_most_recent_input_if_code_matches(
+        &mut self,
+        execution_count: Option<u32>,
+        code: &str,
+    ) -> bool {
+        for entry in self.entries.iter_mut().rev() {
+            if let TranscriptEntry::Input(input) = entry
+                && input.code == code
+            {
+                input.execution_count = execution_count;
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn push_system(&mut self, text: impl Into<String>) {
         self.entries.push(TranscriptEntry::System(SystemEntry {
             text: text.into(),

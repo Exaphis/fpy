@@ -91,6 +91,7 @@ pub struct AppUi {
     last_execution_count: Option<u32>,
     busy_started_at: Option<Instant>,
     busy_code: Option<String>,
+    optimistic_submit_code: Option<String>,
     status: KernelStatus,
     connection_summary: String,
     session_ready: bool,
@@ -122,6 +123,7 @@ impl AppUi {
             last_execution_count: None,
             busy_started_at: None,
             busy_code: None,
+            optimistic_submit_code: None,
             status: KernelStatus::Connecting,
             connection_summary,
             session_ready: false,
@@ -206,6 +208,7 @@ impl AppUi {
     fn clear_busy_runtime(&mut self) {
         self.busy_started_at = None;
         self.busy_code = None;
+        self.optimistic_submit_code = None;
     }
 
     fn last_runtime_for_code(&self, code: &str) -> Option<u64> {
@@ -395,11 +398,34 @@ impl AppUi {
         Ok(())
     }
 
-    pub fn insert_execute_input(&mut self, execution_count: Option<u32>, code: &str) -> Result<()> {
+    pub fn show_submitted_code(&mut self, code: &str) -> Result<()> {
         self.begin_busy_runtime(code.to_string());
+        self.optimistic_submit_code = Some(code.to_string());
+        self.set_status(KernelStatus::Busy);
+        let optimistic_count = self
+            .last_execution_count
+            .map(|count| count.saturating_add(1));
         self.display_model
             .transcript
-            .push_input(execution_count, code);
+            .push_input(optimistic_count, code);
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub fn insert_execute_input(&mut self, execution_count: Option<u32>, code: &str) -> Result<()> {
+        let reconciled_optimistic_input = self.optimistic_submit_code.as_deref() == Some(code)
+            && self
+                .display_model
+                .transcript
+                .update_most_recent_input_if_code_matches(execution_count, code);
+        if reconciled_optimistic_input {
+            self.optimistic_submit_code = None;
+        } else {
+            self.begin_busy_runtime(code.to_string());
+            self.display_model
+                .transcript
+                .push_input(execution_count, code);
+        }
         self.dirty = true;
         Ok(())
     }
